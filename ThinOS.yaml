@@ -666,13 +666,23 @@ autoinstall:
               if port != "3389":
                   slug += "-" + port
               profile_file = os.path.join(profile_dir, slug + ".json")
-              with open(profile_file, "w", encoding="utf-8") as f:
-                  json.dump(data, f, indent=2)
-              os.chmod(profile_file, 0o600)
-      
               desktop_dir = os.path.expanduser("~/Desktop")
               os.makedirs(desktop_dir, mode=0o755, exist_ok=True)
               desktop_file = os.path.join(desktop_dir, "RDP-" + slug + ".desktop")
+              if os.path.exists(profile_file) or os.path.exists(desktop_file):
+                  confirm = Gtk.MessageDialog(
+                      transient_for=self, modal=True, message_type=Gtk.MessageType.QUESTION,
+                      buttons=Gtk.ButtonsType.YES_NO,
+                      text=f"A connection to '{computer}' already exists on the desktop."
+                  )
+                  confirm.format_secondary_text("Replace it with these settings?")
+                  response = confirm.run(); confirm.destroy()
+                  if response != Gtk.ResponseType.YES:
+                      return
+              with open(profile_file, "w", encoding="utf-8") as f:
+                  json.dump(data, f, indent=2)
+              os.chmod(profile_file, 0o600)
+
               display_name = f"RDP - {computer}"
               desktop_data = (
                   "[Desktop Entry]\n"
@@ -3161,17 +3171,13 @@ autoinstall:
               # Administrator tools are real graphical applications.
               # Only the terminal uses the privileged helper to enter the vdi
               # administrator shell without asking for a second password.
+              # It must be launched through thinclient-admin-terminal (not a
+              # plain gnome-terminal) so its PID is tracked: that lets
+              # thinclient-exit-admin close the privileged shell the moment
+              # Administrator Mode is exited, instead of leaving it running.
               commands = {
                   "terminal": [
-                      "gnome-terminal",
-                      "--",
-                      "/bin/bash",
-                      "-lc",
-                      (
-                          "exec sudo -n "
-                          "/usr/local/sbin/"
-                          "thinclient-admin-tool terminal"
-                      )
+                      "/usr/local/bin/thinclient-admin-terminal"
                   ],
                   "netstats": [
                       "gnome-system-monitor",
