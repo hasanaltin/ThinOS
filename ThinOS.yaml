@@ -3143,6 +3143,12 @@ autoinstall:
                   padding: 8px;
               }
 
+              #StatusPopup {
+                  background-color: #ffffff;
+                  border: 1px solid #b7bdc2;
+                  border-radius: 8px;
+              }
+
               scale trough {
                   min-height: 5px;
                   background-color: #d6dce0;
@@ -3382,11 +3388,12 @@ autoinstall:
               if monitor is not None:
                   geometry = monitor.get_geometry()
 
+                  self.panel_x = geometry.x
+                  self.panel_y = geometry.y + geometry.height - PANEL_HEIGHT
+
                   self.panel.move(
-                      geometry.x,
-                      geometry.y
-                      + geometry.height
-                      - PANEL_HEIGHT
+                      self.panel_x,
+                      self.panel_y
                   )
 
                   self.panel.set_size_request(
@@ -3397,10 +3404,12 @@ autoinstall:
               else:
                   screen = Gdk.Screen.get_default()
 
+                  self.panel_x = 0
+                  self.panel_y = screen.get_height() - PANEL_HEIGHT
+
                   self.panel.move(
-                      0,
-                      screen.get_height()
-                      - PANEL_HEIGHT
+                      self.panel_x,
+                      self.panel_y
                   )
 
                   self.panel.set_size_request(
@@ -3719,7 +3728,7 @@ autoinstall:
 
               entries = [
                   (
-                      "X Terminal",
+                      "Terminal",
                       "utilities-terminal-symbolic",
                       "terminal",
                       "Administrator Terminal"
@@ -4005,11 +4014,48 @@ autoinstall:
               self.start_menu.hide()
               spawn(command_line)
 
+          def new_status_window(self):
+              # A plain always-on-top window, styled to look like a popover,
+              # instead of an actual Gtk.Popover. Popovers are override-
+              # redirect windows the window manager doesn't manage, and they
+              # were losing the stacking fight against this panel's own
+              # keep_above DOCK window - reported as showing up behind other
+              # windows. A window that sets keep_above itself (like the Start
+              # Menu, which never had this problem) stays on top reliably.
+              win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+              win.set_name("StatusPopup")
+              win.set_decorated(False)
+              win.set_resizable(False)
+              win.set_keep_above(True)
+              win.set_skip_taskbar_hint(True)
+              win.set_skip_pager_hint(True)
+              win.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+              win.connect("focus-out-event", self.on_status_popup_focus_out)
+              return win
+
+          def on_status_popup_focus_out(self, win, _event):
+              win.destroy()
+              return False
+
+          def show_status_popup(self, win, button):
+              win.show_all()
+
+              _minimum, natural = win.get_preferred_size()
+              button_x, _button_y = button.translate_coordinates(self.panel, 0, 0)
+              button_width = button.get_allocated_width()
+
+              x = self.panel_x + button_x + button_width - natural.width
+              x = max(self.panel_x, x)
+              y = self.panel_y - natural.height
+
+              win.move(x, y)
+              win.present()
+
           def show_network(
               self,
               button
           ):
-              popover = Gtk.Popover.new(button)
+              win = self.new_status_window()
 
               box = Gtk.Box(
                   orientation=Gtk.Orientation.VERTICAL,
@@ -4087,7 +4133,7 @@ autoinstall:
               settings_button.connect(
                   "clicked",
                   lambda *_: (
-                      popover.popdown(),
+                      win.destroy(),
                       spawn("/usr/local/bin/thinclient-control-panel")
                   )
               )
@@ -4117,15 +4163,14 @@ autoinstall:
                   4
               )
 
-              popover.add(box)
-              popover.show_all()
-              popover.popup()
+              win.add(box)
+              self.show_status_popup(win, button)
 
           def show_volume(
               self,
               button
           ):
-              popover = Gtk.Popover.new(button)
+              win = self.new_status_window()
 
               box = Gtk.Box(
                   orientation=Gtk.Orientation.VERTICAL,
@@ -4203,15 +4248,14 @@ autoinstall:
                   0
               )
 
-              popover.add(box)
-              popover.show_all()
-              popover.popup()
+              win.add(box)
+              self.show_status_popup(win, button)
 
           def show_keyboard(
               self,
               button
           ):
-              popover = Gtk.Popover.new(button)
+              win = self.new_status_window()
 
               box = Gtk.Box(
                   orientation=Gtk.Orientation.VERTICAL,
@@ -4240,7 +4284,7 @@ autoinstall:
               settings_button.connect(
                   "clicked",
                   lambda *_: (
-                      popover.popdown(),
+                      win.destroy(),
                       spawn("/usr/local/bin/thinclient-control-panel")
                   )
               )
@@ -4270,9 +4314,8 @@ autoinstall:
                   4
               )
 
-              popover.add(box)
-              popover.show_all()
-              popover.popup()
+              win.add(box)
+              self.show_status_popup(win, button)
 
           def update_clock(self):
               now = datetime.now()
@@ -4291,14 +4334,13 @@ autoinstall:
               self,
               button
           ):
-              popover = Gtk.Popover.new(button)
+              win = self.new_status_window()
 
               calendar = Gtk.Calendar()
               calendar.set_border_width(8)
 
-              popover.add(calendar)
-              popover.show_all()
-              popover.popup()
+              win.add(calendar)
+              self.show_status_popup(win, button)
 
 
       VDIShell()
