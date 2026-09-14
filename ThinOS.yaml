@@ -4068,6 +4068,15 @@ autoinstall:
               )
 
           def on_start_menu_focus_out(self, _window, _event):
+              # Ignore a focus-out that arrives immediately after the menu
+              # was shown: present() asking the WM for focus right after a
+              # move can itself cause a spurious focus-out/in pair while the
+              # window settles, which would otherwise close the menu on its
+              # own before the user did anything.
+              shown_at = getattr(self, "start_menu_shown_at", 0)
+              if GLib.get_monotonic_time() - shown_at < 400000:
+                  return False
+
               self.start_menu_closed_at = GLib.get_monotonic_time()
               self.start_menu.hide()
               return False
@@ -4106,6 +4115,15 @@ autoinstall:
                   - natural.height
               )
 
+              # Without an explicit focus request, the menu can be shown
+              # without ever actually gaining input focus (the WM may just
+              # leave focus on whatever was already active) - and a window
+              # that never gained focus can never fire a legitimate
+              # focus-out-event later, which was making the menu impossible
+              # to dismiss by clicking elsewhere.
+              self.start_menu_shown_at = GLib.get_monotonic_time()
+              self.start_menu.present_with_time(Gtk.get_current_event_time())
+
           def launch_and_hide(
               self,
               command_line
@@ -4137,6 +4155,14 @@ autoinstall:
               return win
 
           def on_status_popup_focus_out(self, win, _event):
+              # Same reasoning as the Start Menu's guard: present() can
+              # itself trigger a spurious focus-out right after the window
+              # is shown, which without this would close the popup before
+              # the user had any chance to interact with it.
+              shown_at = getattr(win, "shown_at", 0)
+              if GLib.get_monotonic_time() - shown_at < 400000:
+                  return False
+
               win.destroy()
               return False
 
@@ -4152,7 +4178,8 @@ autoinstall:
               y = self.panel_y - natural.height
 
               win.move(x, y)
-              win.present()
+              win.shown_at = GLib.get_monotonic_time()
+              win.present_with_time(Gtk.get_current_event_time())
 
           def show_network(
               self,
