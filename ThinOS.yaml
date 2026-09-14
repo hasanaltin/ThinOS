@@ -147,7 +147,7 @@ autoinstall:
           cinnamon-desktop-data librsvg2-common \
           python3 python3-gi gir1.2-gtk-3.0 gir1.2-gtk-4.0 gir1.2-adw-1 \
           freerdp3-x11 \
-          network-manager-gnome \
+          network-manager network-manager-gnome \
           pavucontrol arandr lxinput pulseaudio-utils \
           lxpolkit \
           zenity pamtester xterm wmctrl \
@@ -1365,6 +1365,67 @@ autoinstall:
           return interface, address, gateway, dns
 
 
+      def nmcli_split(line):
+          # nmcli -t escapes literal ":" inside a field as "\:"; split only on
+          # unescaped colons so an SSID containing ":" isn't cut in half.
+          parts = re.split(r"(?<!\\):", line)
+          return [p.replace("\\:", ":") for p in parts]
+
+
+      def wifi_device():
+          out = command(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
+
+          for line in out.splitlines():
+              fields = nmcli_split(line)
+              if len(fields) == 2 and fields[1] == "wifi":
+                  return fields[0]
+
+          return ""
+
+
+      def wifi_scan():
+          device = wifi_device()
+          if not device:
+              return None
+
+          subprocess.run(
+              ["nmcli", "device", "wifi", "rescan", "ifname", device],
+              stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL,
+              timeout=15
+          )
+
+          out = command([
+              "nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+              "device", "wifi", "list", "ifname", device
+          ])
+
+          seen = set()
+          networks = []
+
+          for line in out.splitlines():
+              fields = nmcli_split(line)
+              if len(fields) < 4:
+                  continue
+
+              in_use, ssid, signal = fields[0], fields[1], fields[2]
+              security = ":".join(fields[3:])
+
+              if not ssid or ssid in seen:
+                  continue
+              seen.add(ssid)
+
+              networks.append({
+                  "ssid": ssid,
+                  "signal": int(signal) if signal.isdigit() else 0,
+                  "secured": bool(security.strip()) and security.strip() != "--",
+                  "in_use": in_use == "*",
+              })
+
+          networks.sort(key=lambda n: (-n["in_use"], -n["signal"]))
+          return networks
+
+
       def display_info():
           raw = command(["xrandr", "--current"])
           connected = []
@@ -1726,37 +1787,216 @@ autoinstall:
 
               page.add(ipv4)
 
-              note = Adw.PreferencesGroup(
-                  title="Configuration"
+              self.wifi_group = Adw.PreferencesGroup(title="Wi-Fi Networks")
+              self.wifi_rows = []
+
+              scan_button = Gtk.Button(label="Scan for Networks")
+              scan_button.add_css_class("suggested-action")
+              scan_button.set_margin_top(6)
+              scan_button.set_margin_bottom(6)
+              scan_button.connect("clicked", self.refresh_wifi)
+              self.wifi_group.add(scan_button)
+
+              page.add(self.wifi_group)
+
+              advanced = Adw.PreferencesGroup(title="Advanced")
+
+              editor_row = Adw.ActionRow(
+                  title="Network Connections",
+                  subtitle="Edit wired, Wi-Fi, and VPN connections - just like Ubuntu's own network settings"
               )
 
-              row = Adw.ActionRow(
-                  title=(
-                      "Administrator access required"
-                      if not admin_enabled()
-                      else "Administrator Mode enabled"
-                  ),
-                  subtitle=(
-                      "Network configuration is read-only in kiosk mode."
-                      if not admin_enabled()
-                      else
-                      "Editable network configuration will be added here."
-                  )
+              add_icon(editor_row, "preferences-system-network-symbolic")
+
+              open_button = Gtk.Button(label="Open")
+              open_button.set_valign(Gtk.Align.CENTER)
+
+              open_button.connect(
+                  "clicked",
+                  lambda *_: subprocess.Popen(["nm-connection-editor"])
               )
 
-              add_icon(
-                  row,
-                  (
-                      "changes-prevent-symbolic"
-                      if not admin_enabled()
-                      else "changes-allow-symbolic"
-                  )
-              )
-
-              note.add(row)
-              page.add(note)
+              editor_row.add_suffix(open_button)
+              advanced.add(editor_row)
+              page.add(advanced)
 
               self.stack.add_named(page, "network")
+              self.refresh_wifi(None)
+
+          def refresh_wifi(self, _button):
+              for row in self.wifi_rows:
+                  self.wifi_group.remove(row)
+              self.wifi_rows = []
+
+              row = Adw.ActionRow(title="Scanning…")
+              add_icon(row, "network-wireless-symbolic")
+              self.wifi_group.add(row)
+              self.wifi_rows.append(row)
+
+              threading.Thread(
+                  target=self.scan_wifi_thread,
+                  daemon=True
+              ).start()
+
+          def scan_wifi_thread(self):
+              networks = wifi_scan()
+              GLib.idle_add(self.populate_wifi, networks)
+
+          def populate_wifi(self, networks):
+              for row in self.wifi_rows:
+                  self.wifi_group.remove(row)
+              self.wifi_rows = []
+
+              if networks is None:
+                  row = Adw.ActionRow(title="No Wi-Fi adapter detected")
+                  add_icon(row, "network-wireless-offline-symbolic")
+                  self.wifi_group.add(row)
+                  self.wifi_rows.append(row)
+                  return False
+
+              if not networks:
+                  row = Adw.ActionRow(title="No Wi-Fi networks found")
+                  add_icon(row, "network-wireless-symbolic")
+                  self.wifi_group.add(row)
+                  self.wifi_rows.append(row)
+                  return False
+
+              for net in networks[:15]:
+                  if net["in_use"]:
+                      subtitle = "Connected"
+                  elif net["secured"]:
+                      subtitle = f"Secured · Signal {net['signal']}%"
+                  else:
+                      subtitle = f"Open · Signal {net['signal']}%"
+
+                  row = Adw.ActionRow(title=net["ssid"], subtitle=subtitle)
+
+                  add_icon(
+                      row,
+                      "network-wireless-symbolic"
+                      if not net["secured"]
+                      else "network-wireless-encrypted-symbolic"
+                  )
+
+                  if not net["in_use"]:
+                      row.set_activatable(True)
+                      add_arrow(row)
+
+                      row.connect(
+                          "activated",
+                          self.connect_wifi,
+                          net["ssid"],
+                          net["secured"]
+                      )
+
+                  self.wifi_group.add(row)
+                  self.wifi_rows.append(row)
+
+              return False
+
+          def connect_wifi(self, _row, ssid, secured):
+              if secured:
+                  self.prompt_wifi_password(ssid)
+              else:
+                  threading.Thread(
+                      target=self.run_wifi_connect,
+                      args=(ssid, None, None, None, None),
+                      daemon=True
+                  ).start()
+
+          def prompt_wifi_password(self, ssid):
+              dialog = Gtk.Window(transient_for=self.window, modal=True)
+              dialog.set_title("Wi-Fi Password")
+              dialog.set_default_size(380, -1)
+              dialog.set_resizable(False)
+
+              box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+              box.set_margin_top(20)
+              box.set_margin_bottom(20)
+              box.set_margin_start(20)
+              box.set_margin_end(20)
+              dialog.set_child(box)
+
+              label = Gtk.Label(label=f"Enter the password for “{ssid}”")
+              label.set_wrap(True)
+              label.set_xalign(0)
+              box.append(label)
+
+              entry = Gtk.PasswordEntry()
+              entry.set_show_peek_icon(True)
+              entry.set_activates_default(True)
+              box.append(entry)
+
+              status = Gtk.Label()
+              status.add_css_class("error")
+              status.set_xalign(0)
+              box.append(status)
+
+              buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+              buttons.set_halign(Gtk.Align.END)
+
+              cancel = Gtk.Button(label="Cancel")
+              cancel.connect("clicked", lambda *_: dialog.close())
+
+              connect = Gtk.Button(label="Connect")
+              connect.add_css_class("suggested-action")
+
+              def do_connect(*_):
+                  password = entry.get_text()
+                  if not password:
+                      status.set_label("Password required.")
+                      return
+
+                  connect.set_sensitive(False)
+                  entry.set_sensitive(False)
+                  status.set_label("Connecting…")
+
+                  threading.Thread(
+                      target=self.run_wifi_connect,
+                      args=(ssid, password, dialog, status, connect),
+                      daemon=True
+                  ).start()
+
+              connect.connect("clicked", do_connect)
+              entry.connect("activate", do_connect)
+
+              buttons.append(cancel)
+              buttons.append(connect)
+              box.append(buttons)
+
+              dialog.set_default_widget(connect)
+              dialog.present()
+              entry.grab_focus()
+
+          def run_wifi_connect(
+              self, ssid, password, dialog, status, connect_button
+          ):
+              args = ["nmcli", "device", "wifi", "connect", ssid]
+              if password:
+                  args += ["password", password]
+
+              try:
+                  result = subprocess.run(
+                      args, capture_output=True, text=True, timeout=45
+                  )
+                  ok = result.returncode == 0
+                  error = result.stderr.strip()
+              except Exception as exc:
+                  ok = False
+                  error = str(exc)
+
+              def finish():
+                  if dialog is not None:
+                      if ok:
+                          dialog.close()
+                      else:
+                          status.set_label(error or "Failed to connect.")
+                          connect_button.set_sensitive(True)
+                  if ok:
+                      self.refresh_wifi(None)
+                  return False
+
+              GLib.idle_add(finish)
 
           def build_sound(self):
               page = Adw.PreferencesPage()
@@ -3972,6 +4212,8 @@ autoinstall:
           fi
       done
       command -v xfreerdp3 >/dev/null 2>&1 || { echo 'Validation failed: xfreerdp3 missing' >&2; exit 41; }
+      command -v nmcli >/dev/null 2>&1 || { echo 'Validation failed: nmcli missing' >&2; exit 43; }
+      command -v nm-connection-editor >/dev/null 2>&1 || { echo 'Validation failed: nm-connection-editor missing' >&2; exit 44; }
       python3 -m py_compile \
           /usr/local/bin/thinclient-shell \
           /usr/local/bin/thinclient-admin-mode \
