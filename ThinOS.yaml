@@ -142,10 +142,10 @@ autoinstall:
       apt-get install -y --no-install-recommends \
           lightdm slick-greeter \
           xserver-xorg xserver-xorg-core xserver-xorg-input-libinput \
-          openbox \
+          openbox picom \
           nemo nemo-python \
           cinnamon-desktop-data librsvg2-common \
-          python3 python3-gi gir1.2-gtk-3.0 gir1.2-gtk-4.0 gir1.2-adw-1 \
+          python3 python3-gi gir1.2-gtk-3.0 gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-wnck-3.0 \
           freerdp3-x11 \
           network-manager network-manager-gnome \
           pavucontrol arandr lxinput pulseaudio-utils \
@@ -314,11 +314,21 @@ autoinstall:
       export DESKTOP_SESSION=thinclient-openbox
       export XDG_SESSION_DESKTOP=thinclient-openbox
 
+      # Fix a fixed 1x scale everywhere instead of letting GTK3, GTK4, and X11
+      # apps each auto-detect DPI independently. Without this, different
+      # toolkit versions can disagree on the scale factor, which is what was
+      # causing inconsistent window scaling and clipped panel text.
+      export GDK_SCALE=1
+      export GDK_DPI_SCALE=1
+      export QT_AUTO_SCREEN_SCALE_FACTOR=0
+      export QT_SCALE_FACTOR=1
+
       xset s off >/dev/null 2>&1 || true
       xset -dpms >/dev/null 2>&1 || true
       xset s noblank >/dev/null 2>&1 || true
       setxkbmap us >/dev/null 2>&1 || true
       xsetroot -solid '#14364d' >/dev/null 2>&1 || true
+      echo 'Xft.dpi: 96' | xrdb -merge - >/dev/null 2>&1 || true
       dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP DESKTOP_SESSION 2>/dev/null || true
 
       # Nemo reads its wallpaper from the Cinnamon desktop-background schema.
@@ -334,6 +344,13 @@ autoinstall:
       /usr/bin/openbox &
       OBPID=$!
 
+      # Lightweight compositor, xrender backend only (no shadows, fading, or
+      # blur - and no GLX, which is far more likely to black-screen on
+      # virtual/embedded GPUs). This gives GTK4/libadwaita windows proper
+      # double buffering, which is what the unredirected, compositor-less
+      # setup was causing them to redraw without.
+      /usr/bin/picom --backend xrender --no-vsync >/tmp/thinclient-picom.log 2>&1 &
+
       sleep 1
       /usr/bin/nemo-desktop >/tmp/thinclient-nemo.log 2>&1 &
       /usr/local/bin/thinclient-panel >/tmp/thinclient-panel.log 2>&1 &
@@ -342,6 +359,7 @@ autoinstall:
           while kill -0 "$OBPID" 2>/dev/null; do
               pgrep -u "$(id -u)" -f '/usr/bin/nemo-desktop' >/dev/null 2>&1 || /usr/bin/nemo-desktop >/tmp/thinclient-nemo.log 2>&1 &
               pgrep -u "$(id -u)" -f '/usr/local/bin/thinclient-panel' >/dev/null 2>&1 || /usr/local/bin/thinclient-panel >/tmp/thinclient-panel.log 2>&1 &
+              pgrep -u "$(id -u)" -f '/usr/bin/picom' >/dev/null 2>&1 || /usr/bin/picom --backend xrender --no-vsync >/tmp/thinclient-picom.log 2>&1 &
               sleep 5
           done
       ) &
@@ -2930,7 +2948,8 @@ autoinstall:
 
       gi.require_version("Gtk", "3.0")
       gi.require_version("Gdk", "3.0")
-      from gi.repository import Gtk, Gdk, GLib
+      gi.require_version("Wnck", "3.0")
+      from gi.repository import Gtk, Gdk, GLib, Pango, Wnck
 
 
       PANEL_HEIGHT = 52
@@ -2972,10 +2991,12 @@ autoinstall:
           def __init__(self):
               self.tools_submenu = None
               self.power_submenu = None
+              self.task_buttons = {}
 
               self.apply_css()
               self.create_panel()
               self.create_start_menu()
+              self.setup_tasklist()
 
               GLib.timeout_add_seconds(
                   1,
@@ -3002,6 +3023,25 @@ autoinstall:
 
               #StartButton:hover {
                   background-color: #dedede;
+              }
+
+              #TaskButton {
+                  background-image: none;
+                  background-color: transparent;
+                  border: none;
+                  border-radius: 4px;
+                  box-shadow: none;
+                  color: #30363a;
+                  padding: 0 10px;
+              }
+
+              #TaskButton:hover {
+                  background-color: #e5e5e5;
+              }
+
+              #TaskButton:checked {
+                  background-color: #d7e9f0;
+                  color: #1688ad;
               }
 
               #StatusButton {
@@ -3360,6 +3400,93 @@ autoinstall:
                       screen.get_width(),
                       PANEL_HEIGHT
                   )
+
+          def setup_tasklist(self):
+              Wnck.set_client_type(Wnck.ClientType.PAGER)
+
+              self.wnck_screen = Wnck.Screen.get_default()
+              self.wnck_screen.connect("window-opened", self.on_window_opened)
+              self.wnck_screen.connect("window-closed", self.on_window_closed)
+
+              self.wnck_screen.connect(
+                  "active-window-changed",
+                  self.on_active_window_changed
+              )
+
+              self.wnck_screen.force_update()
+
+              for window in self.wnck_screen.get_windows():
+                  self.add_task_button(window)
+
+          def on_window_opened(self, _screen, window):
+              self.add_task_button(window)
+
+          def on_window_closed(self, _screen, window):
+              button = self.task_buttons.pop(window, None)
+              if button is not None:
+                  button.destroy()
+
+          def on_active_window_changed(self, screen, _previous_window):
+              active = screen.get_active_window()
+
+              for window, button in self.task_buttons.items():
+                  button.set_active(window == active)
+
+          def add_task_button(self, window):
+              if window.is_skip_tasklist() or window in self.task_buttons:
+                  return
+
+              button = Gtk.ToggleButton()
+              button.set_name("TaskButton")
+              button.set_relief(Gtk.ReliefStyle.NONE)
+
+              box = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=6
+              )
+
+              icon = Gtk.Image()
+              pixbuf = window.get_icon()
+              if pixbuf is not None:
+                  icon.set_from_pixbuf(pixbuf)
+
+              label = Gtk.Label(label=window.get_name())
+              label.set_max_width_chars(22)
+              label.set_ellipsize(Pango.EllipsizeMode.END)
+              label.set_xalign(0)
+
+              box.pack_start(icon, False, False, 0)
+              box.pack_start(label, True, True, 0)
+              button.add(box)
+
+              button.set_active(window.is_active())
+
+              button.connect(
+                  "clicked",
+                  self.on_task_clicked,
+                  window
+              )
+
+              window.connect(
+                  "name-changed",
+                  lambda w: label.set_text(w.get_name())
+              )
+
+              self.tasks.pack_start(button, False, False, 0)
+              button.show_all()
+
+              self.task_buttons[window] = button
+
+          def on_task_clicked(self, _button, window):
+              timestamp = Gtk.get_current_event_time()
+
+              if window.is_minimized():
+                  window.unminimize(timestamp)
+                  window.activate(timestamp)
+              elif window.is_active():
+                  window.minimize()
+              else:
+                  window.activate(timestamp)
 
           def create_start_menu(self):
               self.start_menu = Gtk.Window(
@@ -3946,6 +4073,18 @@ autoinstall:
               )
               detail.set_xalign(0)
 
+              settings_button = Gtk.Button(
+                  label="Network Settings…"
+              )
+
+              settings_button.connect(
+                  "clicked",
+                  lambda *_: (
+                      popover.popdown(),
+                      spawn("/usr/local/bin/thinclient-control-panel")
+                  )
+              )
+
               box.pack_start(
                   title,
                   False,
@@ -3963,6 +4102,12 @@ autoinstall:
                   False,
                   False,
                   0
+              )
+              box.pack_start(
+                  settings_button,
+                  False,
+                  False,
+                  4
               )
 
               popover.add(box)
@@ -4081,6 +4226,18 @@ autoinstall:
               )
               layout.set_xalign(0)
 
+              settings_button = Gtk.Button(
+                  label="Keyboard Settings…"
+              )
+
+              settings_button.connect(
+                  "clicked",
+                  lambda *_: (
+                      popover.popdown(),
+                      spawn("/usr/local/bin/thinclient-control-panel")
+                  )
+              )
+
               box.pack_start(
                   title,
                   False,
@@ -4098,6 +4255,12 @@ autoinstall:
                   False,
                   False,
                   0
+              )
+              box.pack_start(
+                  settings_button,
+                  False,
+                  False,
+                  4
               )
 
               popover.add(box)
@@ -4214,6 +4377,7 @@ autoinstall:
       command -v xfreerdp3 >/dev/null 2>&1 || { echo 'Validation failed: xfreerdp3 missing' >&2; exit 41; }
       command -v nmcli >/dev/null 2>&1 || { echo 'Validation failed: nmcli missing' >&2; exit 43; }
       command -v nm-connection-editor >/dev/null 2>&1 || { echo 'Validation failed: nm-connection-editor missing' >&2; exit 44; }
+      command -v picom >/dev/null 2>&1 || { echo 'Validation failed: picom missing' >&2; exit 45; }
       python3 -m py_compile \
           /usr/local/bin/thinclient-shell \
           /usr/local/bin/thinclient-admin-mode \
