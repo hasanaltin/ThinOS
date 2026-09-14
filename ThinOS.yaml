@@ -3073,6 +3073,7 @@ autoinstall:
       class VDIShell:
 
           def __init__(self):
+              self.start_menu = None
               self.tools_submenu = None
               self.power_submenu = None
               self.task_buttons = {}
@@ -3583,65 +3584,45 @@ autoinstall:
                   window.activate(timestamp)
 
           def create_start_menu(self):
-              self.start_menu = Gtk.Window(
-                  type=Gtk.WindowType.TOPLEVEL
-              )
+              # A real Gtk.Menu instead of a plain Gtk.Window. Menus have
+              # their own well-tested pointer grab that dismisses them on an
+              # outside click or Escape - relying on the window manager to
+              # send a focus-out-event for a plain window turned out to be
+              # unreliable here (it could fire immediately after present(),
+              # closing the menu on its own, or never fire at all for a
+              # genuine outside click). This also lets Tools and Power use
+              # native submenus (set_submenu()) instead of manually popped
+              # Gtk.Menu instances anchored to a button, which were being
+              # mistaken for "the main menu lost focus" and closing it.
+              if self.start_menu is not None:
+                  self.start_menu.destroy()
 
+              self.start_menu = Gtk.Menu()
               self.start_menu.set_name("StartMenu")
-              self.start_menu.set_decorated(False)
-              self.start_menu.set_resizable(False)
-              self.start_menu.set_keep_above(True)
-              self.start_menu.set_skip_taskbar_hint(True)
-              self.start_menu.set_skip_pager_hint(True)
-
-              self.start_menu.connect(
-                  "focus-out-event",
-                  self.on_start_menu_focus_out
-              )
-
-              self.start_menu.set_default_size(
-                  MENU_WIDTH,
-                  -1
-              )
-
-              root = Gtk.Box(
-                  orientation=Gtk.Orientation.VERTICAL,
-                  spacing=0
-              )
-
-              self.start_menu.add(root)
-
-              self.menu_items_box = Gtk.Box(
-                  orientation=Gtk.Orientation.VERTICAL,
-                  spacing=0
-              )
-
-              root.pack_start(
-                  self.menu_items_box,
-                  True,
-                  True,
-                  0
-              )
+              self.start_menu.connect("deactivate", self.on_start_menu_deactivate)
 
               self.add_menu_item(
+                  self.start_menu,
                   "Citrix Workspace",
                   "citrix-receiver",
                   "/usr/local/bin/thinclient-citrix"
               )
 
               self.add_menu_item(
+                  self.start_menu,
                   "Remote Desktop",
                   "computer-symbolic",
                   "/usr/local/bin/thinclient-rdp"
               )
 
               self.add_menu_item(
+                  self.start_menu,
                   "Omnissa Horizon",
                   "video-display-symbolic",
                   "/usr/local/bin/thinclient-horizon"
               )
 
-              self.separator()
+              self.separator(self.start_menu)
 
               admin_label = (
                   "Switch to User"
@@ -3656,6 +3637,7 @@ autoinstall:
               )
 
               self.add_menu_item(
+                  self.start_menu,
                   admin_label,
                   (
                       "system-log-out-symbolic"
@@ -3666,32 +3648,27 @@ autoinstall:
               )
 
               self.add_menu_item(
+                  self.start_menu,
                   "System Information",
                   "dialog-information-symbolic",
                   "/usr/local/bin/thinclient-system-info"
               )
 
               self.add_menu_item(
+                  self.start_menu,
                   "Control Panel",
                   "preferences-system-symbolic",
                   "/usr/local/bin/thinclient-control-panel"
               )
 
               if admin_enabled():
-                  self.add_tools_item()
+                  self.add_tools_item(self.start_menu)
 
-              self.add_power_item()
+              self.add_power_item(self.start_menu)
 
-          def add_menu_item(
-              self,
-              label,
-              icon,
-              command_line
-          ):
-              row = Gtk.Button()
-              row.set_name("MenuRow")
-              row.set_relief(Gtk.ReliefStyle.NONE)
+              self.start_menu.show_all()
 
+          def make_menu_row_box(self, label, icon):
               box = Gtk.Box(
                   orientation=Gtk.Orientation.HORIZONTAL,
                   spacing=12
@@ -3723,91 +3700,38 @@ autoinstall:
                   0
               )
 
-              row.add(box)
+              return box
+
+          def add_menu_item(
+              self,
+              menu,
+              label,
+              icon,
+              command_line
+          ):
+              row = Gtk.MenuItem()
+              row.set_name("MenuRow")
+              row.add(self.make_menu_row_box(label, icon))
 
               row.connect(
-                  "clicked",
-                  lambda *_: self.launch_and_hide(
-                      command_line
+                  "activate",
+                  lambda *_: spawn(command_line)
+              )
+
+              menu.append(row)
+              return row
+
+          def add_tools_item(self, menu):
+              row = Gtk.MenuItem()
+              row.set_name("MenuRow")
+              row.add(
+                  self.make_menu_row_box(
+                      "Tools", "applications-utilities-symbolic"
                   )
               )
 
-              self.menu_items_box.pack_start(
-                  row,
-                  False,
-                  False,
-                  0
-              )
-
-          def add_tools_item(self):
-              row = Gtk.Button()
-              row.set_name("MenuRow")
-              row.set_relief(Gtk.ReliefStyle.NONE)
-
-              box = Gtk.Box(
-                  orientation=Gtk.Orientation.HORIZONTAL,
-                  spacing=12
-              )
-
-              image = Gtk.Image.new_from_icon_name(
-                  "applications-utilities-symbolic",
-                  Gtk.IconSize.LARGE_TOOLBAR
-              )
-              image.set_name("MenuIcon")
-              image.set_pixel_size(22)
-
-              text = Gtk.Label(label="Tools")
-              text.set_name("MenuLabel")
-              text.set_xalign(0)
-
-              arrow = Gtk.Image.new_from_icon_name(
-                  "go-next-symbolic",
-                  Gtk.IconSize.MENU
-              )
-
-              box.pack_start(
-                  image,
-                  False,
-                  False,
-                  0
-              )
-              box.pack_start(
-                  text,
-                  True,
-                  True,
-                  0
-              )
-              box.pack_end(
-                  arrow,
-                  False,
-                  False,
-                  0
-              )
-
-              row.add(box)
-
-              row.connect(
-                  "clicked",
-                  self.open_tools_submenu
-              )
-
-              self.menu_items_box.pack_start(
-                  row,
-                  False,
-                  False,
-                  0
-              )
-
-          def open_tools_submenu(
-              self,
-              row,
-              *_
-          ):
-              if not admin_enabled():
-                  return
-
-              menu = Gtk.Menu()
-              self.tools_submenu = menu
+              submenu = Gtk.Menu()
+              self.tools_submenu = submenu
 
               entries = [
                   (
@@ -3880,16 +3804,10 @@ autoinstall:
                       title
                   )
 
-                  menu.append(item)
+                  submenu.append(item)
 
-              menu.show_all()
-
-              menu.popup_at_widget(
-                  row,
-                  Gdk.Gravity.NORTH_EAST,
-                  Gdk.Gravity.NORTH_WEST,
-                  None
-              )
+              row.set_submenu(submenu)
+              menu.append(row)
 
           def launch_admin_tool(
               self,
@@ -3897,12 +3815,8 @@ autoinstall:
               action,
               title
           ):
-              try:
-                  self.tools_submenu.popdown()
-              except Exception:
-                  pass
-
-              self.start_menu.hide()
+              # Activating a menu item automatically closes it and every
+              # parent menu in the chain - no manual popdown/hide needed.
 
               # Most administrator tools are real graphical applications that
               # need no special privilege. Terminal and Check for Updates are
@@ -3957,75 +3871,17 @@ autoinstall:
                   start_new_session=True
               )
 
-          def add_power_item(self):
-              row = Gtk.Button()
+          def add_power_item(self, menu):
+              row = Gtk.MenuItem()
               row.set_name("MenuRow")
-              row.set_relief(Gtk.ReliefStyle.NONE)
-
-              box = Gtk.Box(
-                  orientation=Gtk.Orientation.HORIZONTAL,
-                  spacing=12
+              row.add(
+                  self.make_menu_row_box(
+                      "Power", "system-shutdown-symbolic"
+                  )
               )
 
-              image = Gtk.Image.new_from_icon_name(
-                  "system-shutdown-symbolic",
-                  Gtk.IconSize.LARGE_TOOLBAR
-              )
-
-              image.set_name("MenuIcon")
-              image.set_pixel_size(22)
-
-              text = Gtk.Label(label="Power")
-              text.set_name("MenuLabel")
-              text.set_xalign(0)
-
-              arrow = Gtk.Image.new_from_icon_name(
-                  "go-next-symbolic",
-                  Gtk.IconSize.MENU
-              )
-
-              box.pack_start(
-                  image,
-                  False,
-                  False,
-                  0
-              )
-
-              box.pack_start(
-                  text,
-                  True,
-                  True,
-                  0
-              )
-
-              box.pack_end(
-                  arrow,
-                  False,
-                  False,
-                  0
-              )
-
-              row.add(box)
-
-              row.connect(
-                  "clicked",
-                  self.open_power_submenu
-              )
-
-              self.menu_items_box.pack_start(
-                  row,
-                  False,
-                  False,
-                  0
-              )
-
-          def open_power_submenu(
-              self,
-              row,
-              *_
-          ):
-              menu = Gtk.Menu()
-              self.power_submenu = menu
+              submenu = Gtk.Menu()
+              self.power_submenu = submenu
 
               for label, command_line in [
                   (
@@ -4041,94 +3897,49 @@ autoinstall:
 
                   item.connect(
                       "activate",
-                      lambda _item, c=command_line:
-                          self.launch_and_hide(c)
+                      lambda _item, c=command_line: spawn(c)
                   )
 
-                  menu.append(item)
+                  submenu.append(item)
 
-              menu.show_all()
+              row.set_submenu(submenu)
+              menu.append(row)
 
-              menu.popup_at_widget(
-                  row,
-                  Gdk.Gravity.NORTH_EAST,
-                  Gdk.Gravity.NORTH_WEST,
-                  None
-              )
-
-          def separator(self):
-              sep = Gtk.Separator()
+          def separator(self, menu):
+              sep = Gtk.SeparatorMenuItem()
               sep.set_name("MenuSeparator")
+              menu.append(sep)
 
-              self.menu_items_box.pack_start(
-                  sep,
-                  False,
-                  False,
-                  0
-              )
-
-          def on_start_menu_focus_out(self, _window, _event):
-              # Ignore a focus-out that arrives immediately after the menu
-              # was shown: present() asking the WM for focus right after a
-              # move can itself cause a spurious focus-out/in pair while the
-              # window settles, which would otherwise close the menu on its
-              # own before the user did anything.
-              shown_at = getattr(self, "start_menu_shown_at", 0)
-              if GLib.get_monotonic_time() - shown_at < 400000:
-                  return False
-
+          def on_start_menu_deactivate(self, _menu):
+              # GtkMenuShell's own signal for "I've just been dismissed" -
+              # fired for a real outside click, Escape, or an item being
+              # activated. Only used here to debounce the Start button
+              # reopening the menu on the same click that just closed it.
               self.start_menu_closed_at = GLib.get_monotonic_time()
-              self.start_menu.hide()
-              return False
 
           def toggle_start_menu(self, *_):
               if self.start_menu.get_visible():
-                  self.start_menu.hide()
+                  self.start_menu.popdown()
                   return
 
-              # The click that reopens the menu here can be the very same
-              # click on the Start button that just closed it: clicking the
-              # button shifts focus to the panel's window first, which fires
-              # focus-out-event on the (still visible) start menu and hides
-              # it, and only then does this "clicked" handler run - without
-              # this guard the menu would immediately reopen instead of
-              # staying closed.
               closed_at = getattr(self, "start_menu_closed_at", 0)
               if GLib.get_monotonic_time() - closed_at < 250000:
                   return
 
-              self.start_menu.destroy()
               self.create_start_menu()
 
-              screen = Gdk.Screen.get_default()
-
-              self.start_menu.show_all()
-
-              _minimum, natural = (
-                  self.start_menu.get_preferred_size()
+              self.start_menu.popup_at_widget(
+                  self.start_button,
+                  Gdk.Gravity.NORTH_WEST,
+                  Gdk.Gravity.SOUTH_WEST,
+                  None
               )
-
-              self.start_menu.move(
-                  0,
-                  screen.get_height()
-                  - PANEL_HEIGHT
-                  - natural.height
-              )
-
-              # Without an explicit focus request, the menu can be shown
-              # without ever actually gaining input focus (the WM may just
-              # leave focus on whatever was already active) - and a window
-              # that never gained focus can never fire a legitimate
-              # focus-out-event later, which was making the menu impossible
-              # to dismiss by clicking elsewhere.
-              self.start_menu_shown_at = GLib.get_monotonic_time()
-              self.start_menu.present_with_time(Gtk.get_current_event_time())
 
           def launch_and_hide(
               self,
               command_line
           ):
-              self.start_menu.hide()
+              self.start_menu.popdown()
               spawn(command_line)
 
           def new_status_window(self):
