@@ -150,7 +150,7 @@ autoinstall:
           network-manager network-manager-gnome \
           pavucontrol arandr lxinput pulseaudio-utils \
           lxpolkit \
-          zenity pamtester xterm wmctrl \
+          zenity pamtester wmctrl \
           gnome-terminal gnome-text-editor gnome-system-monitor gnome-logs gnome-screenshot update-manager \
           x11-xserver-utils x11-utils xinput dbus-x11 dconf-cli \
           xdg-user-dirs curl ca-certificates openssh-server
@@ -2653,17 +2653,15 @@ autoinstall:
 
       RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
       MARKER="$RUNTIME/thinclient-admin-mode"
-      PIDFILE="$RUNTIME/thinclient-admin-terminal.pid"
 
-      if [ -f "$PIDFILE" ]; then
-          PID=$(cat "$PIDFILE" 2>/dev/null || true)
-
-          if [ -n "${PID:-}" ]; then
-              kill "$PID" 2>/dev/null || true
-          fi
-
-          rm -f "$PIDFILE"
-      fi
+      # Close by WM_CLASS rather than tracking a PID: gnome-terminal is a
+      # client/server app, so the process that launches a window is not
+      # reliably the process behind that window for the whole time it is
+      # open, which made PID-based tracking fragile. WM_CLASS survives
+      # things a window title does not (e.g. the shell inside setting its
+      # own title), and only this specific admin terminal window uses this
+      # class - the "Check for Updates" terminal is unaffected.
+      wmctrl -x -c thinclient-admin-terminal 2>/dev/null || true
 
       rm -f "$MARKER"
       EOF
@@ -2675,25 +2673,16 @@ autoinstall:
 
       RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
       MARKER="$RUNTIME/thinclient-admin-mode"
-      PIDFILE="$RUNTIME/thinclient-admin-terminal.pid"
 
       [ -f "$MARKER" ] || exit 1
 
-      /usr/bin/xterm \
-          -title "Administrator Terminal" \
-          -e /bin/bash -lc \
-          'exec sudo -n /usr/local/sbin/thinclient-admin-tool terminal' &
-
-      XPID=$!
-      printf '%s\n' "$XPID" > "$PIDFILE"
-
-      cleanup() {
-          kill "$XPID" 2>/dev/null || true
-          rm -f "$PIDFILE"
-      }
-
-      trap cleanup EXIT INT TERM
-      wait "$XPID" || true
+      # A real terminal emulator with its own close button (CSD), unlike
+      # xterm, which has none and depends entirely on the window manager to
+      # supply one - reported as impossible to close.
+      exec /usr/bin/gnome-terminal \
+          --class=thinclient-admin-terminal \
+          --title "Administrator Terminal" \
+          -- /bin/bash -lc 'exec sudo -n /usr/local/sbin/thinclient-admin-tool terminal'
       EOF
       chmod 755 /usr/local/bin/thinclient-admin-terminal
 
