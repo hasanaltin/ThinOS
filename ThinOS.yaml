@@ -2949,8 +2949,10 @@ autoinstall:
 
       import gi
       import os
+      import re
       import shlex
       import subprocess
+      import threading
       from datetime import datetime
 
       gi.require_version("Gtk", "3.0")
@@ -2993,12 +2995,88 @@ autoinstall:
           return any(os.path.exists(path) for path in ADMIN_MARKERS)
 
 
+      def nmcli_split(line):
+          # nmcli -t escapes literal ":" inside a field as "\:"; split only on
+          # unescaped colons so an SSID containing ":" isn't cut in half.
+          parts = re.split(r"(?<!\\):", line)
+          return [p.replace("\\:", ":") for p in parts]
+
+
+      def wifi_device():
+          out = command(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
+
+          for line in out.splitlines():
+              fields = nmcli_split(line)
+              if len(fields) == 2 and fields[1] == "wifi":
+                  return fields[0]
+
+          return ""
+
+
+      def wifi_scan():
+          device = wifi_device()
+          if not device:
+              return None
+
+          subprocess.run(
+              ["nmcli", "device", "wifi", "rescan", "ifname", device],
+              stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL,
+              timeout=15
+          )
+
+          out = command([
+              "nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+              "device", "wifi", "list", "ifname", device
+          ])
+
+          seen = set()
+          networks = []
+
+          for line in out.splitlines():
+              fields = nmcli_split(line)
+              if len(fields) < 4:
+                  continue
+
+              in_use, ssid, signal = fields[0], fields[1], fields[2]
+              security = ":".join(fields[3:])
+
+              if not ssid or ssid in seen:
+                  continue
+              seen.add(ssid)
+
+              networks.append({
+                  "ssid": ssid,
+                  "signal": int(signal) if signal.isdigit() else 0,
+                  "secured": bool(security.strip()) and security.strip() != "--",
+                  "in_use": in_use == "*",
+              })
+
+          networks.sort(key=lambda n: (-n["in_use"], -n["signal"]))
+          return networks
+
+
+      def wifi_connect(ssid, password):
+          args = ["nmcli", "device", "wifi", "connect", ssid]
+          if password:
+              args += ["password", password]
+
+          try:
+              result = subprocess.run(
+                  args, capture_output=True, text=True, timeout=45
+              )
+              return result.returncode == 0, result.stderr.strip()
+          except Exception as exc:
+              return False, str(exc)
+
+
       class VDIShell:
 
           def __init__(self):
               self.tools_submenu = None
               self.power_submenu = None
               self.task_buttons = {}
+              self.start_menu_closed_at = 0
 
               self.apply_css()
               self.create_panel()
@@ -3516,6 +3594,11 @@ autoinstall:
               self.start_menu.set_skip_taskbar_hint(True)
               self.start_menu.set_skip_pager_hint(True)
 
+              self.start_menu.connect(
+                  "focus-out-event",
+                  self.on_start_menu_focus_out
+              )
+
               self.start_menu.set_default_size(
                   MENU_WIDTH,
                   -1
@@ -3984,9 +4067,25 @@ autoinstall:
                   0
               )
 
+          def on_start_menu_focus_out(self, _window, _event):
+              self.start_menu_closed_at = GLib.get_monotonic_time()
+              self.start_menu.hide()
+              return False
+
           def toggle_start_menu(self, *_):
               if self.start_menu.get_visible():
                   self.start_menu.hide()
+                  return
+
+              # The click that reopens the menu here can be the very same
+              # click on the Start button that just closed it: clicking the
+              # button shifts focus to the panel's window first, which fires
+              # focus-out-event on the (still visible) start menu and hides
+              # it, and only then does this "clicked" handler run - without
+              # this guard the menu would immediately reopen instead of
+              # staying closed.
+              closed_at = getattr(self, "start_menu_closed_at", 0)
+              if GLib.get_monotonic_time() - closed_at < 250000:
                   return
 
               self.start_menu.destroy()
@@ -4030,7 +4129,11 @@ autoinstall:
               win.set_skip_taskbar_hint(True)
               win.set_skip_pager_hint(True)
               win.set_type_hint(Gdk.WindowTypeHint.UTILITY)
-              win.connect("focus-out-event", self.on_status_popup_focus_out)
+
+              win.focus_out_handler_id = win.connect(
+                  "focus-out-event", self.on_status_popup_focus_out
+              )
+
               return win
 
           def on_status_popup_focus_out(self, win, _event):
@@ -4126,6 +4229,42 @@ autoinstall:
               )
               detail.set_xalign(0)
 
+              wifi_header = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=6
+              )
+
+              wifi_label = Gtk.Label()
+              wifi_label.set_markup("<b>Wi-Fi Networks</b>")
+              wifi_label.set_xalign(0)
+              wifi_header.pack_start(wifi_label, True, True, 0)
+
+              wifi_list_box = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL,
+                  spacing=2
+              )
+
+              scan_button = Gtk.Button.new_from_icon_name(
+                  "view-refresh-symbolic",
+                  Gtk.IconSize.MENU
+              )
+
+              scan_button.set_relief(Gtk.ReliefStyle.NONE)
+              scan_button.set_tooltip_text("Scan for networks")
+
+              scan_button.connect(
+                  "clicked",
+                  lambda *_: self.refresh_network_wifi(win, wifi_list_box)
+              )
+
+              wifi_header.pack_end(scan_button, False, False, 0)
+
+              scroller = Gtk.ScrolledWindow()
+              scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+              scroller.set_min_content_height(150)
+              scroller.set_max_content_height(220)
+              scroller.add(wifi_list_box)
+
               settings_button = Gtk.Button(
                   label="Network Settings…"
               )
@@ -4156,6 +4295,8 @@ autoinstall:
                   False,
                   0
               )
+              box.pack_start(wifi_header, False, False, 4)
+              box.pack_start(scroller, True, True, 0)
               box.pack_start(
                   settings_button,
                   False,
@@ -4163,8 +4304,197 @@ autoinstall:
                   4
               )
 
+              win.set_default_size(300, -1)
               win.add(box)
               self.show_status_popup(win, button)
+              self.refresh_network_wifi(win, wifi_list_box)
+
+          def refresh_network_wifi(self, win, wifi_list_box):
+              for child in wifi_list_box.get_children():
+                  child.destroy()
+
+              placeholder = Gtk.Label(label="Scanning…")
+              placeholder.set_xalign(0)
+              placeholder.set_margin_top(4)
+              placeholder.set_margin_bottom(4)
+              wifi_list_box.pack_start(placeholder, False, False, 0)
+              wifi_list_box.show_all()
+
+              def scan_and_populate():
+                  networks = wifi_scan()
+                  GLib.idle_add(
+                      self.populate_network_wifi, win, wifi_list_box, networks
+                  )
+
+              threading.Thread(target=scan_and_populate, daemon=True).start()
+
+          def populate_network_wifi(self, win, wifi_list_box, networks):
+              try:
+                  for child in wifi_list_box.get_children():
+                      child.destroy()
+
+                  if networks is None:
+                      row = Gtk.Label(label="No Wi-Fi adapter detected")
+                      row.set_xalign(0)
+                      wifi_list_box.pack_start(row, False, False, 4)
+                  elif not networks:
+                      row = Gtk.Label(label="No Wi-Fi networks found")
+                      row.set_xalign(0)
+                      wifi_list_box.pack_start(row, False, False, 4)
+                  else:
+                      for net in networks[:10]:
+                          wifi_list_box.pack_start(
+                              self.build_wifi_row(win, net), False, False, 0
+                          )
+
+                  wifi_list_box.show_all()
+              except Exception:
+                  pass
+
+              return False
+
+          def build_wifi_row(self, win, net):
+              row = Gtk.Button()
+              row.set_name("MenuRow")
+              row.set_relief(Gtk.ReliefStyle.NONE)
+
+              hbox = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=8
+              )
+
+              icon = Gtk.Image.new_from_icon_name(
+                  "network-wireless-symbolic"
+                  if not net["secured"]
+                  else "network-wireless-encrypted-symbolic",
+                  Gtk.IconSize.MENU
+              )
+
+              hbox.pack_start(icon, False, False, 0)
+
+              label = Gtk.Label(label=net["ssid"])
+              label.set_xalign(0)
+              label.set_ellipsize(Pango.EllipsizeMode.END)
+              hbox.pack_start(label, True, True, 0)
+
+              status_label = Gtk.Label(
+                  label="Connected" if net["in_use"] else f"{net['signal']}%"
+              )
+
+              hbox.pack_start(status_label, False, False, 0)
+              row.add(hbox)
+
+              if net["in_use"]:
+                  row.set_sensitive(False)
+              else:
+                  row.connect(
+                      "clicked",
+                      self.on_wifi_row_clicked,
+                      win,
+                      net["ssid"],
+                      net["secured"]
+                  )
+
+              return row
+
+          def on_wifi_row_clicked(self, _button, win, ssid, secured):
+              if secured:
+                  self.prompt_wifi_password(ssid, win)
+              else:
+                  threading.Thread(
+                      target=lambda: wifi_connect(ssid, None),
+                      daemon=True
+                  ).start()
+
+          def prompt_wifi_password(self, ssid, parent_win):
+              # parent_win auto-destroys itself on focus-out (see
+              # new_status_window) so it doesn't linger once you click away -
+              # but this dialog stealing its focus would trigger exactly
+              # that, destroying the popup this dialog is transient for
+              # while it's still open. Block that handler for as long as the
+              # dialog is up.
+              focus_out_handler_id = getattr(
+                  parent_win, "focus_out_handler_id", None
+              )
+
+              if focus_out_handler_id is not None:
+                  parent_win.handler_block(focus_out_handler_id)
+
+              dialog = Gtk.Dialog(
+                  title="Wi-Fi Password",
+                  transient_for=parent_win,
+                  modal=True
+              )
+
+              dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+              connect_button = dialog.add_button("Connect", Gtk.ResponseType.OK)
+              dialog.set_default_response(Gtk.ResponseType.OK)
+
+              content = dialog.get_content_area()
+              content.set_border_width(18)
+              content.set_spacing(12)
+
+              label = Gtk.Label(
+                  label=f"Enter the password for “{ssid}”"
+              )
+              label.set_xalign(0)
+              content.pack_start(label, False, False, 0)
+
+              entry = Gtk.Entry()
+              entry.set_visibility(False)
+              entry.set_invisible_char("●")
+              entry.set_activates_default(True)
+              content.pack_start(entry, False, False, 0)
+
+              status = Gtk.Label()
+              status.set_xalign(0)
+              content.pack_start(status, False, False, 0)
+
+              dialog.show_all()
+              entry.grab_focus()
+
+              while True:
+                  response = dialog.run()
+
+                  if response != Gtk.ResponseType.OK:
+                      break
+
+                  password = entry.get_text()
+
+                  if not password:
+                      status.set_markup(
+                          "<span foreground='red'>Password required.</span>"
+                      )
+                      continue
+
+                  entry.set_sensitive(False)
+                  connect_button.set_sensitive(False)
+                  status.set_text("Connecting…")
+
+                  while Gtk.events_pending():
+                      Gtk.main_iteration()
+
+                  ok, error = wifi_connect(ssid, password)
+
+                  if ok:
+                      break
+
+                  entry.set_sensitive(True)
+                  connect_button.set_sensitive(True)
+
+                  status.set_markup(
+                      "<span foreground='red'>{}</span>".format(
+                          GLib.markup_escape_text(error or "Failed to connect.")
+                      )
+                  )
+
+              dialog.destroy()
+
+              if focus_out_handler_id is not None:
+                  try:
+                      parent_win.handler_unblock(focus_out_handler_id)
+                  except Exception:
+                      pass
 
           def show_volume(
               self,
