@@ -2789,7 +2789,11 @@ autoinstall:
                           echo "$REMOTE_SHA" > "$VERSION_FILE"
                           echo "ThinOS appliance files updated."
                           echo "Restarting the desktop panel to apply changes..."
-                          pkill -u kiosk -f /usr/local/bin/thinclient-panel 2>/dev/null || true
+                          # Kill the actual running GUI process, not the
+                          # thinclient-panel wrapper: killing only the wrapper
+                          # wouldn't take its child down with it, and the
+                          # watchdog would never notice anything was wrong.
+                          pkill -u kiosk -f /usr/local/bin/thinclient-shell 2>/dev/null || true
                       else
                           echo "ThinOS update failed; see $LOG for details." >&2
                           STATUS=1
@@ -4295,7 +4299,15 @@ autoinstall:
       #!/bin/bash
       set -u
 
-      exec /usr/local/bin/thinclient-shell
+      # Deliberately not "exec": the watchdog in thinclient-session checks
+      # liveness with `pgrep -f /usr/local/bin/thinclient-panel`, which only
+      # keeps matching while this string is still in some process's cmdline.
+      # exec'ing into thinclient-shell would replace this process's cmdline
+      # entirely, making that check always fail and spawn a new instance
+      # every 5 seconds forever. Running it as a plain foreground child keeps
+      # this wrapper (and its recognizable cmdline) alive for exactly as long
+      # as thinclient-shell runs.
+      /usr/local/bin/thinclient-shell
       EOF
       chmod 755 /usr/local/bin/thinclient-panel
 
