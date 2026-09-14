@@ -1574,6 +1574,27 @@ autoinstall:
                   close_button
               )
 
+              self.maximize_button = Gtk.Button(
+                  icon_name="window-maximize-symbolic"
+              )
+
+              self.maximize_button.set_tooltip_text("Maximize")
+              self.maximize_button.connect("clicked", self.toggle_maximize)
+              header.pack_end(self.maximize_button)
+
+              minimize_button = Gtk.Button(
+                  icon_name="window-minimize-symbolic"
+              )
+
+              minimize_button.set_tooltip_text("Minimize")
+
+              minimize_button.connect(
+                  "clicked",
+                  lambda *_: self.window.minimize()
+              )
+
+              header.pack_end(minimize_button)
+
               root.append(header)
 
               self.stack = Gtk.Stack()
@@ -1598,6 +1619,11 @@ autoinstall:
 
               self.window.set_content(root)
 
+              self.window.connect(
+                  "notify::maximized",
+                  self.on_maximized_changed
+              )
+
               self.show_page(
                   "overview",
                   "Control Center",
@@ -1605,6 +1631,25 @@ autoinstall:
               )
 
               self.window.present()
+
+          def toggle_maximize(self, _button):
+              if self.window.is_maximized():
+                  self.window.unmaximize()
+              else:
+                  self.window.maximize()
+
+          def on_maximized_changed(self, window, _pspec):
+              self.maximize_button.set_icon_name(
+                  "window-restore-symbolic"
+                  if window.is_maximized()
+                  else "window-maximize-symbolic"
+              )
+
+              self.maximize_button.set_tooltip_text(
+                  "Restore"
+                  if window.is_maximized()
+                  else "Maximize"
+              )
 
           def show_page(
               self,
