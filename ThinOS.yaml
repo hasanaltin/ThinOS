@@ -2455,7 +2455,7 @@ autoinstall:
       #!/bin/bash
       set -uo pipefail
 
-      REPO_RAW_URL="https://raw.githubusercontent.com/hasanaltin/ThinOS/master/ThinOS.yaml"
+      REPO="hasanaltin/ThinOS"
       VERSION_FILE="/var/lib/thinclient/thinos-version"
       LOG="/var/log/thinclient-update.log"
 
@@ -2484,45 +2484,66 @@ autoinstall:
       WORKDIR=$(mktemp -d)
       trap 'rm -rf "$WORKDIR"' EXIT
 
-      if ! curl -fsSL --connect-timeout 15 --max-time 60 -o "$WORKDIR/ThinOS.yaml" "$REPO_RAW_URL"; then
-          echo "Could not reach $REPO_RAW_URL; skipping ThinOS update." >&2
+      # Resolve the latest commit SHA via the API first, then fetch the raw
+      # file by that exact SHA rather than by the "master" branch name.
+      # raw.githubusercontent.com caches branch-name URLs at its CDN edge and
+      # can keep serving an older commit's content for a while after a push
+      # (observed in practice); a URL pinned to an immutable commit SHA does
+      # not have that problem.
+      REMOTE_SHA=$(
+          curl -fsSL --connect-timeout 15 --max-time 30 \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$REPO/commits/master" 2>/dev/null \
+          | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha",""))' 2>/dev/null \
+          || true
+      )
+
+      if [ -z "$REMOTE_SHA" ]; then
+          echo "Could not resolve the latest ThinOS commit from GitHub; skipping ThinOS update." >&2
           STATUS=1
       else
-          REMOTE_HASH=$(sha256sum "$WORKDIR/ThinOS.yaml" | awk '{print $1}')
-          LOCAL_HASH=$(cat "$VERSION_FILE" 2>/dev/null || true)
+          LOCAL_SHA=$(cat "$VERSION_FILE" 2>/dev/null || true)
 
-          if [ "$REMOTE_HASH" = "$LOCAL_HASH" ]; then
-              echo "ThinOS appliance is already up to date."
+          if [ "$REMOTE_SHA" = "$LOCAL_SHA" ]; then
+              echo "ThinOS appliance is already up to date ($REMOTE_SHA)."
           else
-              echo "Newer ThinOS configuration found. Applying..."
-              awk '
-                  /^[[:space:]]*cat > \/target\/usr\/local\/sbin\/thinclient-firstboot <<.THINCLIENT_FIRSTBOOT.[[:space:]]*$/ { flag=1; next }
-                  flag && /^[[:space:]]*THINCLIENT_FIRSTBOOT[[:space:]]*$/ { flag=0 }
-                  flag { print }
-              ' "$WORKDIR/ThinOS.yaml" | sed -e 's/^      //' > "$WORKDIR/provision.sh"
+              echo "Newer ThinOS configuration found ($REMOTE_SHA). Applying..."
 
-              if [ ! -s "$WORKDIR/provision.sh" ]; then
-                  echo "Could not find the provisioning script inside the downloaded ThinOS.yaml." >&2
+              if ! curl -fsSL --connect-timeout 15 --max-time 60 \
+                      -o "$WORKDIR/ThinOS.yaml" \
+                      "https://raw.githubusercontent.com/$REPO/$REMOTE_SHA/ThinOS.yaml"; then
+                  echo "Could not download ThinOS.yaml for commit $REMOTE_SHA." >&2
                   STATUS=1
               else
-                  # Re-run the same script first boot uses, minus the two steps
-                  # that only make sense on a brand-new install: the "already
-                  # configured" early-exit, and the unconditional reboot at the
-                  # very end.
-                  sed -i \
-                      -e '/^if \[ -e "\$MARKER" \]; then$/,/^fi$/d' \
-                      -e '/^systemctl --no-block reboot/d' \
-                      "$WORKDIR/provision.sh"
-                  chmod 755 "$WORKDIR/provision.sh"
+                  awk '
+                      /^[[:space:]]*cat > \/target\/usr\/local\/sbin\/thinclient-firstboot <<.THINCLIENT_FIRSTBOOT.[[:space:]]*$/ { flag=1; next }
+                      flag && /^[[:space:]]*THINCLIENT_FIRSTBOOT[[:space:]]*$/ { flag=0 }
+                      flag { print }
+                  ' "$WORKDIR/ThinOS.yaml" | sed -e 's/^      //' > "$WORKDIR/provision.sh"
 
-                  if bash "$WORKDIR/provision.sh"; then
-                      echo "$REMOTE_HASH" > "$VERSION_FILE"
-                      echo "ThinOS appliance files updated."
-                      echo "Restarting the desktop panel to apply changes..."
-                      pkill -u kiosk -f /usr/local/bin/thinclient-panel 2>/dev/null || true
-                  else
-                      echo "ThinOS update failed; see $LOG for details." >&2
+                  if [ ! -s "$WORKDIR/provision.sh" ]; then
+                      echo "Could not find the provisioning script inside the downloaded ThinOS.yaml." >&2
                       STATUS=1
+                  else
+                      # Re-run the same script first boot uses, minus the two
+                      # steps that only make sense on a brand-new install: the
+                      # "already configured" early-exit, and the unconditional
+                      # reboot at the very end.
+                      sed -i \
+                          -e '/^if \[ -e "\$MARKER" \]; then$/,/^fi$/d' \
+                          -e '/^systemctl --no-block reboot/d' \
+                          "$WORKDIR/provision.sh"
+                      chmod 755 "$WORKDIR/provision.sh"
+
+                      if bash "$WORKDIR/provision.sh"; then
+                          echo "$REMOTE_SHA" > "$VERSION_FILE"
+                          echo "ThinOS appliance files updated."
+                          echo "Restarting the desktop panel to apply changes..."
+                          pkill -u kiosk -f /usr/local/bin/thinclient-panel 2>/dev/null || true
+                      else
+                          echo "ThinOS update failed; see $LOG for details." >&2
+                          STATUS=1
+                      fi
                   fi
               fi
           fi
