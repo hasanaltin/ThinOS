@@ -3,7 +3,9 @@
 #
 # Local administrator:
 #   username: vdi
-#   password: vdi
+#   password: set your own hash below (identity.password) before building.
+#             This file is public - never commit a real password hash here.
+#             Generate one with:  mkpasswd -m sha-512    (or: openssl passwd -6)
 #
 # End-user session:
 #   LightDM -> hidden kiosk autologin -> Openbox + Nemo thin-client desktop
@@ -42,7 +44,11 @@ autoinstall:
     realname: VDI Administrator
     hostname: horizon-thinclient
     username: vdi
-    password: '$6$Wv6JjFuQceIlr35o$YrGKpKh0s4dMAHTtEmEBNS5rzQekZDZHD6/LnGtYkV/4td8wJuJ2.TUB1CeOU701MNRV26DzbIVi5iLoyYVDQ.'
+    # Placeholder only - this is not a usable hash, so the account is locked
+    # out until you replace it. Generate your own with `mkpasswd -m sha-512`
+    # and paste the result here before building. Never commit a real hash to
+    # this public repository.
+    password: 'CHANGEME-generate-your-own-sha512-crypt-hash'
 
   source:
     id: ubuntu-desktop-minimal
@@ -1286,11 +1292,12 @@ autoinstall:
       import os
       import re
       import subprocess
+      import threading
 
       gi.require_version("Gtk", "4.0")
       gi.require_version("Adw", "1")
 
-      from gi.repository import Gtk, Adw
+      from gi.repository import Gtk, Adw, GLib
 
 
       ADMIN_MARKERS = [
@@ -1516,6 +1523,7 @@ autoinstall:
               self.build_keyboard()
               self.build_mouse()
               self.build_admin()
+              self.build_updates()
 
               self.window.set_content(root)
 
@@ -1652,6 +1660,15 @@ autoinstall:
                   ),
                   "admin",
                   "Administrator Mode"
+              )
+
+              self.nav_row(
+                  administration,
+                  "Software Updates",
+                  "Check for updates" if admin_enabled() else "Restricted",
+                  "software-update-available-symbolic",
+                  "updates",
+                  "Software Updates"
               )
 
               page.add(administration)
@@ -1959,6 +1976,155 @@ autoinstall:
               page.add(group)
 
               self.stack.add_named(page, "admin")
+
+          def build_updates(self):
+              page = Adw.PreferencesPage()
+
+              if not admin_enabled():
+                  group = Adw.PreferencesGroup(title="Software Updates")
+
+                  row = Adw.ActionRow(
+                      title="Administrator access required",
+                      subtitle="Unlock Administrator Mode to check for updates."
+                  )
+
+                  add_icon(row, "changes-prevent-symbolic")
+                  group.add(row)
+                  page.add(group)
+                  self.stack.add_named(page, "updates")
+                  return
+
+              group = Adw.PreferencesGroup(title="Software Updates")
+
+              self.update_row = Adw.ActionRow(
+                  title="Ubuntu and ThinOS Updates",
+                  subtitle="Check for and install the latest updates."
+              )
+
+              add_icon(self.update_row, "software-update-available-symbolic")
+
+              self.update_button = Gtk.Button(label="Check for Updates")
+              self.update_button.add_css_class("suggested-action")
+              self.update_button.set_valign(Gtk.Align.CENTER)
+              self.update_button.connect("clicked", self.start_update)
+              self.update_row.add_suffix(self.update_button)
+
+              group.add(self.update_row)
+
+              self.update_progress = Gtk.ProgressBar()
+              self.update_progress.set_show_text(False)
+              self.update_progress.set_margin_start(12)
+              self.update_progress.set_margin_end(12)
+              self.update_progress.set_margin_top(6)
+              self.update_progress.set_margin_bottom(6)
+              self.update_progress.set_visible(False)
+
+              group.add(self.update_progress)
+              page.add(group)
+
+              log_group = Adw.PreferencesGroup(title="Progress")
+
+              scroller = Gtk.ScrolledWindow()
+              scroller.set_min_content_height(280)
+              scroller.set_vexpand(True)
+
+              self.update_log = Gtk.TextView()
+              self.update_log.set_editable(False)
+              self.update_log.set_cursor_visible(False)
+              self.update_log.set_monospace(True)
+              self.update_log.set_left_margin(8)
+              self.update_log.set_top_margin(8)
+              self.update_log.set_bottom_margin(8)
+              self.update_log_buffer = self.update_log.get_buffer()
+
+              scroller.set_child(self.update_log)
+              log_group.add(scroller)
+              page.add(log_group)
+
+              self.update_running = False
+
+              self.stack.add_named(page, "updates")
+
+          def append_update_log(self, text):
+              end = self.update_log_buffer.get_end_iter()
+              self.update_log_buffer.insert(end, text)
+
+              mark = self.update_log_buffer.create_mark(
+                  None, self.update_log_buffer.get_end_iter(), False
+              )
+
+              self.update_log.scroll_to_mark(mark, 0.0, False, 0.0, 1.0)
+              return False
+
+          def pulse_update_progress(self):
+              if not self.update_running:
+                  return False
+
+              self.update_progress.pulse()
+              return True
+
+          def start_update(self, _button):
+              if self.update_running:
+                  return
+
+              self.update_running = True
+              self.update_button.set_sensitive(False)
+              self.update_button.set_label("Updating…")
+              self.update_row.set_subtitle("Update in progress…")
+              self.update_progress.set_visible(True)
+              self.update_log_buffer.set_text("")
+
+              GLib.timeout_add(150, self.pulse_update_progress)
+
+              threading.Thread(
+                  target=self.run_update,
+                  daemon=True
+              ).start()
+
+          def run_update(self):
+              success = False
+
+              try:
+                  proc = subprocess.Popen(
+                      [
+                          "sudo", "-n",
+                          "/usr/local/sbin/thinclient-admin-tool",
+                          "updates"
+                      ],
+                      stdin=subprocess.DEVNULL,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT,
+                      text=True,
+                      bufsize=1
+                  )
+
+                  for line in proc.stdout:
+                      GLib.idle_add(self.append_update_log, line)
+
+                  proc.wait()
+                  success = proc.returncode == 0
+
+              except Exception as exc:
+                  GLib.idle_add(
+                      self.append_update_log,
+                      f"\nFailed to start update: {exc}\n"
+                  )
+
+              GLib.idle_add(self.finish_update, success)
+
+          def finish_update(self, success):
+              self.update_running = False
+              self.update_progress.set_visible(False)
+              self.update_button.set_sensitive(True)
+              self.update_button.set_label("Check for Updates")
+
+              self.update_row.set_subtitle(
+                  "Up to date."
+                  if success
+                  else "Update failed. See the log above for details."
+              )
+
+              return False
 
 
       app = ControlCenter()
@@ -2298,6 +2464,11 @@ autoinstall:
       echo
       echo "=== ThinOS Update: $(date -Is) ==="
 
+      # Tracks overall success independently of the final interactive prompt
+      # below, so callers (including the GUI, which runs with stdin closed)
+      # can rely on this script's exit code to know whether the update worked.
+      STATUS=0
+
       echo
       echo "--- Ubuntu system updates ---"
       if apt-get update; then
@@ -2305,6 +2476,7 @@ autoinstall:
           apt-get -y autoremove --purge
       else
           echo "Failed to refresh the package index; skipping system upgrade." >&2
+          STATUS=1
       fi
 
       echo
@@ -2314,6 +2486,7 @@ autoinstall:
 
       if ! curl -fsSL --connect-timeout 15 --max-time 60 -o "$WORKDIR/ThinOS.yaml" "$REPO_RAW_URL"; then
           echo "Could not reach $REPO_RAW_URL; skipping ThinOS update." >&2
+          STATUS=1
       else
           REMOTE_HASH=$(sha256sum "$WORKDIR/ThinOS.yaml" | awk '{print $1}')
           LOCAL_HASH=$(cat "$VERSION_FILE" 2>/dev/null || true)
@@ -2330,6 +2503,7 @@ autoinstall:
 
               if [ ! -s "$WORKDIR/provision.sh" ]; then
                   echo "Could not find the provisioning script inside the downloaded ThinOS.yaml." >&2
+                  STATUS=1
               else
                   # Re-run the same script first boot uses, minus the two steps
                   # that only make sense on a brand-new install: the "already
@@ -2348,6 +2522,7 @@ autoinstall:
                       pkill -u kiosk -f /usr/local/bin/thinclient-panel 2>/dev/null || true
                   else
                       echo "ThinOS update failed; see $LOG for details." >&2
+                      STATUS=1
                   fi
               fi
           fi
@@ -2356,7 +2531,8 @@ autoinstall:
       echo
       echo "=== Update check complete ==="
       echo
-      read -rp "Press Enter to close..."
+      read -rp "Press Enter to close..." || true
+      exit "$STATUS"
       EOF
       chmod 755 /usr/local/sbin/thinclient-update
 
