@@ -2281,6 +2281,85 @@ autoinstall:
       EOF
       chmod 755 /usr/local/bin/thinclient-admin-terminal
 
+      # One-click updater: refreshes Ubuntu packages, then pulls the latest
+      # ThinOS.yaml from GitHub and re-runs its provisioning script (the same
+      # one that runs on first boot) so appliance files stay in sync with the
+      # repository. Runs as root via thinclient-admin-tool.
+      cat > /usr/local/sbin/thinclient-update <<'EOF'
+      #!/bin/bash
+      set -uo pipefail
+
+      REPO_RAW_URL="https://raw.githubusercontent.com/hasanaltin/ThinOS/master/ThinOS.yaml"
+      VERSION_FILE="/var/lib/thinclient/thinos-version"
+      LOG="/var/log/thinclient-update.log"
+
+      mkdir -p /var/lib/thinclient
+      exec > >(tee -a "$LOG") 2>&1
+      echo
+      echo "=== ThinOS Update: $(date -Is) ==="
+
+      echo
+      echo "--- Ubuntu system updates ---"
+      if apt-get update; then
+          apt-get -y full-upgrade
+          apt-get -y autoremove --purge
+      else
+          echo "Failed to refresh the package index; skipping system upgrade." >&2
+      fi
+
+      echo
+      echo "--- ThinOS appliance updates ---"
+      WORKDIR=$(mktemp -d)
+      trap 'rm -rf "$WORKDIR"' EXIT
+
+      if ! curl -fsSL --connect-timeout 15 --max-time 60 -o "$WORKDIR/ThinOS.yaml" "$REPO_RAW_URL"; then
+          echo "Could not reach $REPO_RAW_URL; skipping ThinOS update." >&2
+      else
+          REMOTE_HASH=$(sha256sum "$WORKDIR/ThinOS.yaml" | awk '{print $1}')
+          LOCAL_HASH=$(cat "$VERSION_FILE" 2>/dev/null || true)
+
+          if [ "$REMOTE_HASH" = "$LOCAL_HASH" ]; then
+              echo "ThinOS appliance is already up to date."
+          else
+              echo "Newer ThinOS configuration found. Applying..."
+              awk '
+                  /^[[:space:]]*cat > \/target\/usr\/local\/sbin\/thinclient-firstboot <<.THINCLIENT_FIRSTBOOT.[[:space:]]*$/ { flag=1; next }
+                  flag && /^[[:space:]]*THINCLIENT_FIRSTBOOT[[:space:]]*$/ { flag=0 }
+                  flag { print }
+              ' "$WORKDIR/ThinOS.yaml" | sed -e 's/^      //' > "$WORKDIR/provision.sh"
+
+              if [ ! -s "$WORKDIR/provision.sh" ]; then
+                  echo "Could not find the provisioning script inside the downloaded ThinOS.yaml." >&2
+              else
+                  # Re-run the same script first boot uses, minus the two steps
+                  # that only make sense on a brand-new install: the "already
+                  # configured" early-exit, and the unconditional reboot at the
+                  # very end.
+                  sed -i \
+                      -e '/^if \[ -e "\$MARKER" \]; then$/,/^fi$/d' \
+                      -e '/^systemctl --no-block reboot/d' \
+                      "$WORKDIR/provision.sh"
+                  chmod 755 "$WORKDIR/provision.sh"
+
+                  if bash "$WORKDIR/provision.sh"; then
+                      echo "$REMOTE_HASH" > "$VERSION_FILE"
+                      echo "ThinOS appliance files updated."
+                      echo "Restarting the desktop panel to apply changes..."
+                      pkill -u kiosk -f /usr/local/bin/thinclient-panel 2>/dev/null || true
+                  else
+                      echo "ThinOS update failed; see $LOG for details." >&2
+                  fi
+              fi
+          fi
+      fi
+
+      echo
+      echo "=== Update check complete ==="
+      echo
+      read -rp "Press Enter to close..."
+      EOF
+      chmod 755 /usr/local/sbin/thinclient-update
+
       cat > /usr/local/sbin/thinclient-admin-tool <<'EOF'
       #!/bin/bash
       set -euo pipefail
@@ -2331,13 +2410,7 @@ autoinstall:
               ;;
 
           updates)
-              clear
-              echo "Available Updates"
-              echo "================="
-              echo
-              apt list --upgradable 2>/dev/null
-              echo
-              read -rp "Press Enter to close..."
+              exec /usr/local/sbin/thinclient-update
               ;;
 
           editor)
@@ -3168,11 +3241,13 @@ autoinstall:
 
               self.start_menu.hide()
 
-              # Administrator tools are real graphical applications.
-              # Only the terminal uses the privileged helper to enter the vdi
-              # administrator shell without asking for a second password.
-              # It must be launched through thinclient-admin-terminal (not a
-              # plain gnome-terminal) so its PID is tracked: that lets
+              # Most administrator tools are real graphical applications that
+              # need no special privilege. Terminal and Check for Updates are
+              # the exceptions: they need root, so they run through the
+              # sudoers-gated thinclient-admin-tool wrapper instead.
+              #
+              # Terminal must be launched through thinclient-admin-terminal
+              # (not a plain gnome-terminal) so its PID is tracked: that lets
               # thinclient-exit-admin close the privileged shell the moment
               # Administrator Mode is exited, instead of leaving it running.
               commands = {
@@ -3184,7 +3259,12 @@ autoinstall:
                       "--show-resources-tab"
                   ],
                   "updates": [
-                      "update-manager"
+                      "gnome-terminal", "--",
+                      "/bin/bash", "-lc",
+                      (
+                          "sudo -n /usr/local/sbin/thinclient-admin-tool "
+                          "updates"
+                      )
                   ],
                   "editor": [
                       "gnome-text-editor"
@@ -3683,6 +3763,7 @@ autoinstall:
           /usr/local/bin/thinclient-shell
           /usr/local/bin/thinclient-admin-mode
           /usr/local/sbin/thinclient-admin-tool
+          /usr/local/sbin/thinclient-update
           /usr/local/bin/thinclient-rdp
           /usr/share/xsessions/thinclient-openbox.desktop
           /usr/local/share/thinclient/nemo-overlay/nemo-directory-view-ui.xml
@@ -3709,6 +3790,7 @@ autoinstall:
       bash -n /usr/local/bin/thinclient-exit-admin
       bash -n /usr/local/bin/thinclient-admin-terminal
       bash -n /usr/local/sbin/thinclient-admin-tool
+      bash -n /usr/local/sbin/thinclient-update
       visudo -cf /etc/sudoers.d/thinclient-admin-auth
 
       # Horizon is a core client for this appliance. If installation fails,
