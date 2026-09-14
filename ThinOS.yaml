@@ -1,0 +1,3765 @@
+#cloud-config
+# Ubuntu 24.04 LTS VDI Thin Client - current enterprise shell build
+#
+# Local administrator:
+#   username: vdi
+#   password: vdi
+#
+# End-user session:
+#   LightDM -> hidden kiosk autologin -> Openbox + Nemo thin-client desktop
+#
+# Desktop empty-space right-click (Ubuntu 24.04 / Nemo 6.0.2):
+#   Create > Citrix / RDP / Omnissa Horizon
+#   Arrange > By Name / By Type / By Size / By Modification Date
+#   Implemented by nemo-python (not actions-tree.json, which is not used here).
+#
+# Saved RDP shortcut right-click:
+#   Start / Edit / Copy / Rename / Delete
+#
+# Note: Omnissa Horizon is downloaded from the URL used in the previous image.
+# Citrix Workspace is not bundled because no Citrix package URL was supplied.
+# UI: custom VDI shell, libadwaita System Information / Control Center /
+# Administrator Login, single Openbox workspace, no Start-menu Search bar, graphical Administrator Tools,
+# and a built-in enterprise-style wallpaper.
+
+autoinstall:
+  version: 1
+
+  interactive-sections:
+    - storage
+
+  refresh-installer:
+    update: false
+
+  locale: en_US.UTF-8
+
+  keyboard:
+    layout: us
+
+  timezone: Europe/Belgrade
+
+  identity:
+    realname: VDI Administrator
+    hostname: horizon-thinclient
+    username: vdi
+    password: '$6$Wv6JjFuQceIlr35o$YrGKpKh0s4dMAHTtEmEBNS5rzQekZDZHD6/LnGtYkV/4td8wJuJ2.TUB1CeOU701MNRV26DzbIVi5iLoyYVDQ.'
+
+  source:
+    id: ubuntu-desktop-minimal
+
+  drivers:
+    install: false
+
+  oem:
+    install: false
+
+  codecs:
+    install: false
+
+  # Install the base OS from the ISO. The thin-client desktop packages are
+  # installed by the first-boot service after networking is available.
+  apt:
+    preserve_sources_list: false
+    geoip: false
+    mirror-selection:
+      primary:
+        - uri: "http://127.0.0.1:9/ubuntu"
+          arches:
+            - amd64
+    fallback: offline-install
+
+  late-commands:
+    # Restore normal repositories for the installed system.
+    - |
+      mkdir -p /target/etc/apt/sources.list.d
+      cat > /target/etc/apt/sources.list.d/ubuntu.sources <<'EOF'
+      Types: deb
+      URIs: https://archive.ubuntu.com/ubuntu
+      Suites: noble noble-updates noble-backports
+      Components: main restricted universe multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: https://security.ubuntu.com/ubuntu
+      Suites: noble-security
+      Components: main restricted universe multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+      EOF
+
+    - |
+      mkdir -p /target/etc/apt/apt.conf.d
+      cat > /target/etc/apt/apt.conf.d/99-thinclient-network <<'EOF'
+      Acquire::ForceIPv4 "true";
+      Acquire::Retries "5";
+      Acquire::http::Timeout "30";
+      Acquire::https::Timeout "30";
+      EOF
+
+
+    # Install the full thin-client provisioning script into the target.
+    - |
+      cat > /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT'
+      #!/bin/bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      
+      MARKER=/var/lib/thinclient/configured
+      if [ -e "$MARKER" ]; then
+          exit 0
+      fi
+      
+      mkdir -p /var/lib/thinclient
+      
+      # Keep a persistent provisioning log. If provisioning fails, the stock
+      # Ubuntu graphical login remains available for administrator recovery.
+      exec > >(tee -a /var/log/thinclient-firstboot.log) 2>&1
+      FAILED=/var/lib/thinclient/last-error
+      trap 'rc=$?; if [ "$rc" -ne 0 ]; then printf "Thin Client provisioning failed at line %s (exit %s).\nSee /var/log/thinclient-firstboot.log\n" "$LINENO" "$rc" > "$FAILED"; fi' EXIT
+      rm -f "$FAILED"
+
+      # Wait up to three minutes for DNS/networking. Do not loop forever: a
+      # failed first boot must fall back to the normal Ubuntu graphical login.
+      NETWORK_READY=0
+      for _ in $(seq 1 36); do
+          if getent hosts archive.ubuntu.com >/dev/null 2>&1; then
+              NETWORK_READY=1
+              break
+          fi
+          sleep 5
+      done
+      if [ "$NETWORK_READY" -ne 1 ]; then
+          echo 'Network/DNS did not become ready; leaving Ubuntu recovery desktop enabled.' >&2
+          exit 20
+      fi
+
+      apt-get update
+      apt-get install -y --no-install-recommends \
+          lightdm slick-greeter \
+          xserver-xorg xserver-xorg-core xserver-xorg-input-libinput \
+          openbox \
+          nemo nemo-python \
+          cinnamon-desktop-data librsvg2-common \
+          python3 python3-gi gir1.2-gtk-3.0 gir1.2-gtk-4.0 gir1.2-adw-1 \
+          freerdp3-x11 \
+          network-manager-gnome \
+          pavucontrol arandr lxinput pulseaudio-utils \
+          lxpolkit \
+          zenity pamtester xterm wmctrl \
+          gnome-terminal gnome-text-editor gnome-system-monitor gnome-logs gnome-screenshot update-manager \
+          x11-xserver-utils x11-utils xinput dbus-x11 dconf-cli \
+          xdg-user-dirs curl ca-certificates openssh-server
+
+      # Installing LightDM must not take away the working Ubuntu recovery GUI
+      # until every appliance component has passed validation.
+      if [ -f /lib/systemd/system/gdm3.service ]; then
+          ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
+          systemctl enable gdm3.service 2>/dev/null || true
+      fi
+
+      # Local administrator already exists from autoinstall identity. Ensure
+      # the hidden kiosk account exists for the appliance session.
+      if ! id kiosk >/dev/null 2>&1; then
+          useradd -m -s /bin/bash kiosk
+      fi
+      passwd -l kiosk || true
+      mkdir -p \
+          /home/kiosk/Desktop \
+          /home/kiosk/.config/nemo \
+          /home/kiosk/.config/thinclient \
+          /home/kiosk/.cache/thinclient \
+          /home/kiosk/.local/share/nemo/actions \
+          /home/kiosk/.local/share/nemo-python/extensions
+
+      runuser -u kiosk -- xdg-user-dirs-update --set DESKTOP /home/kiosk/Desktop 2>/dev/null || true
+
+      # Enterprise-style wallpaper shipped with the appliance. It is a simple
+      # original SVG so the installation has no external wallpaper dependency.
+      mkdir -p /usr/local/share/thinclient
+      cat > /usr/local/share/thinclient/wallpaper.svg <<'EOF'
+      <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+        <defs>
+          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#14364d"/>
+            <stop offset="0.55" stop-color="#1f5b7a"/>
+            <stop offset="1" stop-color="#2f7fa3"/>
+          </linearGradient>
+          <linearGradient id="wave1" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#2f6f8f" stop-opacity="0.78"/>
+            <stop offset="1" stop-color="#4f9bb7" stop-opacity="0.58"/>
+          </linearGradient>
+          <linearGradient id="wave2" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#17435f" stop-opacity="0.72"/>
+            <stop offset="1" stop-color="#2a6685" stop-opacity="0.58"/>
+          </linearGradient>
+        </defs>
+        <rect width="1920" height="1080" fill="url(#bg)"/>
+        <path d="M0 210 C330 80 540 360 860 260 C1160 165 1430 15 1920 95 L1920 0 L0 0 Z" fill="#0f2f43" opacity="0.33"/>
+        <path d="M0 590 C310 520 520 760 790 645 C1085 520 1390 540 1920 300 L1920 720 C1510 840 1210 760 915 865 C590 980 315 805 0 915 Z" fill="url(#wave2)"/>
+        <path d="M0 805 C310 680 500 955 820 865 C1160 770 1460 650 1920 565 L1920 1080 L0 1080 Z" fill="url(#wave1)"/>
+      </svg>
+      EOF
+      chmod 644 /usr/local/share/thinclient/wallpaper.svg
+
+      # Thin-client users get exactly one Openbox workspace. This prevents
+      # workspace-switch popups such as "desktop 2" from ever appearing.
+      mkdir -p /home/kiosk/.config/openbox
+      cp /etc/xdg/openbox/rc.xml /home/kiosk/.config/openbox/rc.xml
+      python3 - <<'PY'
+      import re
+      import xml.etree.ElementTree as ET
+
+      path = "/home/kiosk/.config/openbox/rc.xml"
+      tree = ET.parse(path)
+      root = tree.getroot()
+
+      m = re.match(r"\{(.+)\}", root.tag)
+      if m:
+          ET.register_namespace("", m.group(1))
+
+      def local(tag):
+          return tag.rsplit("}", 1)[-1]
+
+      found = False
+      for elem in root.iter():
+          if local(elem.tag) == "desktops":
+              for child in elem:
+                  if local(child.tag) == "number":
+                      child.text = "1"
+                      found = True
+                  elif local(child.tag) == "firstdesk":
+                      child.text = "1"
+
+      if not found:
+          raise SystemExit("Could not find Openbox desktop count")
+
+      tree.write(path, encoding="UTF-8", xml_declaration=True)
+      PY
+      chown -R kiosk:kiosk /home/kiosk/.config/openbox
+
+      # Hide kiosk from user choosers while retaining manual administrator
+      # login as a recovery path if the kiosk session ever exits.
+      mkdir -p /var/lib/AccountsService/users
+      cat > /var/lib/AccountsService/users/kiosk <<'EOF'
+      [User]
+      SystemAccount=true
+      XSession=thinclient-openbox
+      EOF
+      chmod 600 /var/lib/AccountsService/users/kiosk
+
+      # Dedicated X11 appliance session. Openbox has no compositor, which
+      # deliberately removes a large source of GPU-specific black-screen bugs.
+      cat > /usr/share/xsessions/thinclient-openbox.desktop <<'EOF'
+      [Desktop Entry]
+      Name=Thin Client
+      Comment=Thin Client Openbox session
+      Exec=/usr/local/bin/thinclient-session
+      TryExec=/usr/local/bin/thinclient-session
+      Type=Application
+      DesktopNames=ThinClient;
+      EOF
+
+      # LightDM configuration is prepared now but does not become the default
+      # display manager until final validation succeeds.
+      mkdir -p /etc/lightdm/lightdm.conf.d
+      cat > /etc/lightdm/lightdm.conf.d/99-thinclient.conf <<'EOF'
+      [Seat:*]
+      greeter-session=slick-greeter
+      user-session=thinclient-openbox
+      autologin-user=kiosk
+      autologin-user-timeout=0
+      allow-guest=false
+      greeter-hide-users=true
+      greeter-show-manual-login=true
+      EOF
+      cat > /home/kiosk/.dmrc <<'EOF'
+      [Desktop]
+      Session=thinclient-openbox
+      EOF
+
+      # Session-wide Nemo resource overlay.
+      sed -i '/^G_RESOURCE_OVERLAYS=/d' /etc/environment 2>/dev/null || true
+      echo 'G_RESOURCE_OVERLAYS=/org/nemo=/usr/local/share/thinclient/nemo-overlay' >> /etc/environment
+
+      # Nemo defaults. The resource overlay below supplies the intentionally
+      # restricted background and selected-RDP context menus.
+      mkdir -p /etc/dconf/profile /etc/dconf/db/local.d
+      cat > /etc/dconf/profile/user <<'EOF'
+      user-db:user
+      system-db:local
+      EOF
+      cat > /etc/dconf/db/local.d/00-thinclient <<'EOF'
+      [org/nemo/plugins]
+      disabled-actions=['90_new-launcher.nemo_action','add-desklets.nemo_action','set-resolution.nemo_action','change-background.nemo_action']
+
+      [org/nemo/preferences]
+      enable-delete=false
+
+      [org/nemo/preferences/menu-config]
+      desktop-menu-customize=false
+      EOF
+      dconf update || true
+
+      # Openbox/Nemo appliance session. The watchdog restarts only the desktop
+      # and panel helpers; Openbox remains the stable window manager.
+      cat > /usr/local/bin/thinclient-session <<'EOF'
+      #!/bin/bash
+      set -u
+      export XDG_CURRENT_DESKTOP=ThinClient
+      export DESKTOP_SESSION=thinclient-openbox
+      export XDG_SESSION_DESKTOP=thinclient-openbox
+
+      xset s off >/dev/null 2>&1 || true
+      xset -dpms >/dev/null 2>&1 || true
+      xset s noblank >/dev/null 2>&1 || true
+      setxkbmap us >/dev/null 2>&1 || true
+      xsetroot -solid '#14364d' >/dev/null 2>&1 || true
+      dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP DESKTOP_SESSION 2>/dev/null || true
+
+      # Nemo reads its wallpaper from the Cinnamon desktop-background schema.
+      # Keep a matching root color as a fallback during desktop startup.
+      if gsettings list-schemas | grep -qx 'org.cinnamon.desktop.background'; then
+          gsettings set org.cinnamon.desktop.background picture-uri 'file:///usr/local/share/thinclient/wallpaper.svg' || true
+          gsettings set org.cinnamon.desktop.background picture-options 'zoom' || true
+          gsettings set org.cinnamon.desktop.background primary-color '#14364d' || true
+          gsettings set org.cinnamon.desktop.background secondary-color '#2f7fa3' || true
+      fi
+
+      /usr/bin/lxpolkit >/dev/null 2>&1 &
+      /usr/bin/openbox &
+      OBPID=$!
+
+      sleep 1
+      /usr/bin/nemo-desktop >/tmp/thinclient-nemo.log 2>&1 &
+      /usr/local/bin/thinclient-panel >/tmp/thinclient-panel.log 2>&1 &
+
+      (
+          while kill -0 "$OBPID" 2>/dev/null; do
+              pgrep -u "$(id -u)" -f '/usr/bin/nemo-desktop' >/dev/null 2>&1 || /usr/bin/nemo-desktop >/tmp/thinclient-nemo.log 2>&1 &
+              pgrep -u "$(id -u)" -f '/usr/local/bin/thinclient-panel' >/dev/null 2>&1 || /usr/local/bin/thinclient-panel >/tmp/thinclient-panel.log 2>&1 &
+              sleep 5
+          done
+      ) &
+
+      wait "$OBPID"
+      EOF
+      chmod 755 /usr/local/bin/thinclient-session
+
+      # Arrange helper used by desktop right-click menu.
+      cat > /usr/local/bin/thinclient-arrange <<'EOF'
+      #!/bin/bash
+      set -e
+      case "${1:-}" in
+          name|size|type|mtime) ;;
+          *) exit 1 ;;
+      esac
+      DESKTOP="${XDG_DESKTOP_DIR:-$HOME/Desktop}"
+      gio set -t string "$DESKTOP" metadata::nemo-icon-view-auto-layout true 2>/dev/null || true
+      gio set -t string "$DESKTOP" metadata::nemo-icon-view-sort-by "$1" 2>/dev/null || true
+      EOF
+      chmod 755 /usr/local/bin/thinclient-arrange
+      
+      # Generic client launchers.
+      cat > /usr/local/bin/thinclient-horizon <<'EOF'
+      #!/bin/bash
+      if [ -x /usr/bin/horizon-client ]; then
+          exec /usr/bin/horizon-client
+      fi
+      exec zenity --error --title='Omnissa Horizon' --text='Omnissa Horizon Client is not installed.'
+      EOF
+      chmod 755 /usr/local/bin/thinclient-horizon
+      
+      cat > /usr/local/bin/thinclient-citrix <<'EOF'
+      #!/bin/bash
+      if [ -x /opt/Citrix/ICAClient/selfservice ]; then
+          exec /opt/Citrix/ICAClient/selfservice
+      elif [ -x /opt/Citrix/ICAClient/wfica ]; then
+          exec /opt/Citrix/ICAClient/wfica
+      fi
+      exec zenity --error --title='Citrix' --text='Citrix Workspace is not installed. Add the Citrix package to this image or install it later.'
+      EOF
+      chmod 755 /usr/local/bin/thinclient-citrix
+      
+      # RDP GUI: normal connect, --create desktop shortcut, or --edit saved profile.
+      cat > /usr/local/bin/thinclient-rdp <<'PY'
+      #!/usr/bin/python3
+      import gi
+      import json
+      import os
+      import re
+      import subprocess
+      import sys
+      
+      gi.require_version("Gtk", "3.0")
+      from gi.repository import Gtk
+      
+      CONFIG_DIR = os.path.expanduser("~/.config/thinclient")
+      CONFIG_FILE = os.path.join(CONFIG_DIR, "rdp.json")
+      CREATE_MODE = "--create" in sys.argv
+      EDIT_MODE = "--edit" in sys.argv
+      EDIT_PROFILE = None
+      if EDIT_MODE:
+          try:
+              EDIT_PROFILE = os.path.abspath(sys.argv[sys.argv.index("--edit") + 1])
+          except (ValueError, IndexError):
+              raise SystemExit("Missing RDP profile")
+      
+      DEFAULTS = {
+          "computer": "", "port": "3389", "username": "", "domain": "",
+          "fullscreen": True, "multimon": False, "dynamic_resolution": True,
+          "resolution": "1920x1080", "scale": "100", "clipboard": True,
+          "audio": True, "microphone": False, "network": "auto", "remember": True
+      }
+      
+      def load_settings():
+          data = DEFAULTS.copy()
+          source = EDIT_PROFILE if EDIT_MODE and EDIT_PROFILE else CONFIG_FILE
+          try:
+              with open(source, "r", encoding="utf-8") as f:
+                  data.update(json.load(f))
+          except Exception:
+              pass
+          return data
+      
+      class RDPWindow(Gtk.Window):
+          def __init__(self):
+              super().__init__(title="Remote Desktop")
+              self.settings = load_settings()
+              self.set_default_size(620, 590)
+              self.set_position(Gtk.WindowPosition.CENTER)
+              self.set_resizable(False)
+              self.set_border_width(24)
+              self.connect("destroy", Gtk.main_quit)
+      
+              main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+              self.add(main)
+              title = Gtk.Label()
+              title.set_markup("<span size='x-large' weight='bold'>Remote Desktop</span>")
+              main.pack_start(title, False, False, 0)
+              if EDIT_MODE:
+                  subtitle_text = "Edit the saved Remote Desktop connection"
+              elif CREATE_MODE:
+                  subtitle_text = "Create a Remote Desktop connection on the desktop"
+              else:
+                  subtitle_text = "Configure and connect to a Windows computer"
+              subtitle = Gtk.Label(label=subtitle_text)
+              main.pack_start(subtitle, False, False, 0)
+      
+              notebook = Gtk.Notebook()
+              main.pack_start(notebook, True, True, 5)
+              notebook.append_page(self.connection_page(), Gtk.Label(label="Connection"))
+              notebook.append_page(self.display_page(), Gtk.Label(label="Display"))
+              notebook.append_page(self.resources_page(), Gtk.Label(label="Resources"))
+              notebook.append_page(self.network_page(), Gtk.Label(label="Network"))
+      
+              self.status = Gtk.Label()
+              self.status.set_halign(Gtk.Align.START)
+              main.pack_start(self.status, False, False, 0)
+              buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+              cancel = Gtk.Button(label="Cancel")
+              action = Gtk.Button(label="Save" if EDIT_MODE else "Create" if CREATE_MODE else "Connect")
+              cancel.set_size_request(130, 42)
+              action.set_size_request(130, 42)
+              cancel.connect("clicked", lambda *_: Gtk.main_quit())
+              if EDIT_MODE:
+                  action.connect("clicked", self.save_edited_connection)
+              elif CREATE_MODE:
+                  action.connect("clicked", self.create_desktop_connection)
+              else:
+                  action.connect("clicked", self.connect_rdp)
+              buttons.pack_end(action, False, False, 0)
+              buttons.pack_end(cancel, False, False, 0)
+              main.pack_end(buttons, False, False, 0)
+              self.set_default(action)
+      
+          def make_grid(self):
+              grid = Gtk.Grid()
+              grid.set_border_width(18)
+              grid.set_column_spacing(18)
+              grid.set_row_spacing(14)
+              return grid
+      
+          def add_label(self, grid, text, row):
+              label = Gtk.Label(label=text)
+              label.set_halign(Gtk.Align.START)
+              grid.attach(label, 0, row, 1, 1)
+      
+          def connection_page(self):
+              grid = self.make_grid()
+              self.add_label(grid, "Computer", 0)
+              self.computer = Gtk.Entry()
+              self.computer.set_placeholder_text("Server name or IP address")
+              self.computer.set_text(str(self.settings.get("computer", "")))
+              self.computer.set_hexpand(True)
+              grid.attach(self.computer, 1, 0, 1, 1)
+      
+              self.add_label(grid, "Port", 1)
+              self.port = Gtk.Entry()
+              self.port.set_text(str(self.settings.get("port", "3389")))
+              self.port.set_max_length(5)
+              grid.attach(self.port, 1, 1, 1, 1)
+      
+              self.add_label(grid, "Username", 2)
+              self.username = Gtk.Entry()
+              self.username.set_text(str(self.settings.get("username", "")))
+              grid.attach(self.username, 1, 2, 1, 1)
+      
+              self.add_label(grid, "Domain", 3)
+              self.domain = Gtk.Entry()
+              self.domain.set_text(str(self.settings.get("domain", "")))
+              self.domain.set_placeholder_text("Optional")
+              grid.attach(self.domain, 1, 3, 1, 1)
+      
+              self.add_label(grid, "Password", 4)
+              self.password = Gtk.Entry()
+              self.password.set_visibility(False)
+              self.password.set_invisible_char("●")
+              self.password.set_activates_default(True)
+              if CREATE_MODE or EDIT_MODE:
+                  self.password.set_sensitive(False)
+                  self.password.set_placeholder_text("Requested when the saved connection is opened")
+              grid.attach(self.password, 1, 4, 1, 1)
+      
+              self.remember = Gtk.CheckButton(label="Save connection settings" if (CREATE_MODE or EDIT_MODE) else "Remember connection settings")
+              self.remember.set_active(True if (CREATE_MODE or EDIT_MODE) else bool(self.settings.get("remember", True)))
+              if CREATE_MODE or EDIT_MODE:
+                  self.remember.set_sensitive(False)
+              grid.attach(self.remember, 1, 5, 1, 1)
+              note = Gtk.Label(label="The password is never saved.")
+              note.set_halign(Gtk.Align.START)
+              grid.attach(note, 1, 6, 1, 1)
+              return grid
+      
+          def display_page(self):
+              grid = self.make_grid()
+              self.fullscreen = Gtk.CheckButton(label="Full Screen")
+              self.fullscreen.set_active(bool(self.settings.get("fullscreen", True)))
+              grid.attach(self.fullscreen, 0, 0, 2, 1)
+              self.multimon = Gtk.CheckButton(label="Use Multiple Monitors")
+              self.multimon.set_active(bool(self.settings.get("multimon", False)))
+              grid.attach(self.multimon, 0, 1, 2, 1)
+              self.dynamic_resolution = Gtk.CheckButton(label="Dynamic Resolution")
+              self.dynamic_resolution.set_active(bool(self.settings.get("dynamic_resolution", True)))
+              grid.attach(self.dynamic_resolution, 0, 2, 2, 1)
+              self.add_label(grid, "Resolution", 3)
+              self.resolution = Gtk.ComboBoxText()
+              resolutions = ["1920x1080", "1600x900", "1366x768", "1280x720", "1024x768"]
+              for value in resolutions:
+                  self.resolution.append_text(value)
+              try:
+                  idx = resolutions.index(str(self.settings.get("resolution", "1920x1080")))
+              except ValueError:
+                  idx = 0
+              self.resolution.set_active(idx)
+              grid.attach(self.resolution, 1, 3, 1, 1)
+              self.add_label(grid, "Scaling", 4)
+              self.scale = Gtk.ComboBoxText()
+              scales = ["100", "140", "180"]
+              for value in scales:
+                  self.scale.append_text(value + "%")
+              try:
+                  idx = scales.index(str(self.settings.get("scale", "100")))
+              except ValueError:
+                  idx = 0
+              self.scale.set_active(idx)
+              grid.attach(self.scale, 1, 4, 1, 1)
+              return grid
+      
+          def resources_page(self):
+              grid = self.make_grid()
+              self.clipboard = Gtk.CheckButton(label="Enable Clipboard")
+              self.clipboard.set_active(bool(self.settings.get("clipboard", True)))
+              grid.attach(self.clipboard, 0, 0, 2, 1)
+              self.audio = Gtk.CheckButton(label="Play Remote Audio Locally")
+              self.audio.set_active(bool(self.settings.get("audio", True)))
+              grid.attach(self.audio, 0, 1, 2, 1)
+              self.microphone = Gtk.CheckButton(label="Redirect Microphone")
+              self.microphone.set_active(bool(self.settings.get("microphone", False)))
+              grid.attach(self.microphone, 0, 2, 2, 1)
+              return grid
+      
+          def network_page(self):
+              grid = self.make_grid()
+              self.add_label(grid, "Connection Type", 0)
+              self.network = Gtk.ComboBoxText()
+              for key, label in [
+                  ("auto", "Automatic"), ("lan", "LAN"), ("wan", "WAN"),
+                  ("broadband-high", "Broadband - High"), ("broadband-low", "Broadband - Low")
+              ]:
+                  self.network.append(key, label)
+              self.network.set_active_id(str(self.settings.get("network", "auto")))
+              grid.attach(self.network, 1, 0, 1, 1)
+              security = Gtk.Label()
+              security.set_markup("<b>Certificate verification:</b> Trust On First Use")
+              security.set_halign(Gtk.Align.START)
+              grid.attach(security, 0, 2, 2, 1)
+              return grid
+      
+          def validate(self):
+              computer = self.computer.get_text().strip()
+              port = self.port.get_text().strip() or "3389"
+              if not computer:
+                  self.status.set_markup("<span foreground='red'>Please enter a computer name or IP address.</span>")
+                  self.computer.grab_focus()
+                  return None
+              try:
+                  p = int(port)
+                  if not 1 <= p <= 65535:
+                      raise ValueError
+              except ValueError:
+                  self.status.set_markup("<span foreground='red'>Port must be between 1 and 65535.</span>")
+                  self.port.grab_focus()
+                  return None
+              return computer, port
+      
+          def data(self, computer, port):
+              return {
+                  "computer": computer,
+                  "port": port,
+                  "username": self.username.get_text().strip(),
+                  "domain": self.domain.get_text().strip(),
+                  "fullscreen": self.fullscreen.get_active(),
+                  "multimon": self.multimon.get_active(),
+                  "dynamic_resolution": self.dynamic_resolution.get_active(),
+                  "resolution": self.resolution.get_active_text(),
+                  "scale": self.scale.get_active_text().replace("%", ""),
+                  "clipboard": self.clipboard.get_active(),
+                  "audio": self.audio.get_active(),
+                  "microphone": self.microphone.get_active(),
+                  "network": self.network.get_active_id(),
+                  "remember": True if (CREATE_MODE or EDIT_MODE) else self.remember.get_active(),
+              }
+      
+          def save_global(self, data):
+              os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+              if not self.remember.get_active():
+                  try:
+                      os.remove(CONFIG_FILE)
+                  except FileNotFoundError:
+                      pass
+                  return
+              with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                  json.dump(data, f, indent=2)
+              os.chmod(CONFIG_FILE, 0o600)
+      
+          def save_edited_connection(self, _button):
+              valid = self.validate()
+              if not valid:
+                  return
+              computer, port = valid
+              data = self.data(computer, port)
+              with open(EDIT_PROFILE, "w", encoding="utf-8") as f:
+                  json.dump(data, f, indent=2)
+              os.chmod(EDIT_PROFILE, 0o600)
+              dialog = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.INFO,
+                                         buttons=Gtk.ButtonsType.OK, text="Connection settings updated.")
+              dialog.run(); dialog.destroy(); Gtk.main_quit()
+      
+          def create_desktop_connection(self, _button):
+              valid = self.validate()
+              if not valid:
+                  return
+              computer, port = valid
+              data = self.data(computer, port)
+              profile_dir = os.path.join(CONFIG_DIR, "rdp-connections")
+              os.makedirs(profile_dir, mode=0o700, exist_ok=True)
+              slug = re.sub(r"[^A-Za-z0-9._-]+", "-", computer).strip("-._") or "remote-desktop"
+              if port != "3389":
+                  slug += "-" + port
+              profile_file = os.path.join(profile_dir, slug + ".json")
+              with open(profile_file, "w", encoding="utf-8") as f:
+                  json.dump(data, f, indent=2)
+              os.chmod(profile_file, 0o600)
+      
+              desktop_dir = os.path.expanduser("~/Desktop")
+              os.makedirs(desktop_dir, mode=0o755, exist_ok=True)
+              desktop_file = os.path.join(desktop_dir, "RDP-" + slug + ".desktop")
+              display_name = f"RDP - {computer}"
+              desktop_data = (
+                  "[Desktop Entry]\n"
+                  "Type=Application\n"
+                  "Version=1.0\n"
+                  f"Name={display_name}\n"
+                  f"Comment=Remote Desktop connection to {computer}:{port}\n"
+                  f"Exec=/usr/local/bin/thinclient-rdp-profile {profile_file}\n"
+                  "Icon=computer-symbolic\n"
+                  "Terminal=false\n"
+                  "Categories=Network;\n"
+                  "StartupNotify=true\n"
+              )
+              with open(desktop_file, "w", encoding="utf-8") as f:
+                  f.write(desktop_data)
+              os.chmod(desktop_file, 0o755)
+              subprocess.run(["/usr/bin/gio", "set", "-t", "string", desktop_file, "metadata::trusted", "true"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+              dialog = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.INFO,
+                                         buttons=Gtk.ButtonsType.OK, text="Remote Desktop connection created.")
+              dialog.format_secondary_text(f"{display_name} has been added to the desktop.")
+              dialog.run(); dialog.destroy(); Gtk.main_quit()
+      
+          def connect_rdp(self, _button):
+              valid = self.validate()
+              if not valid:
+                  return
+              computer, port = valid
+              data = self.data(computer, port)
+              self.save_global(data)
+              args = ["/usr/bin/xfreerdp3", f"/v:{computer}", f"/port:{port}", "/cert:tofu", "/from-stdin:force"]
+              if data["username"]: args.append(f"/u:{data['username']}")
+              if data["domain"]: args.append(f"/d:{data['domain']}")
+              if data["network"]: args.append(f"/network:{data['network']}")
+              if data["scale"]: args.append(f"/scale:{data['scale']}")
+              if data["fullscreen"]: args.append("/f")
+              if data["multimon"]: args.append("/multimon")
+              if data["dynamic_resolution"]: args.append("+dynamic-resolution")
+              elif data["resolution"]: args.append(f"/size:{data['resolution']}")
+              if data["clipboard"]: args.append("+clipboard")
+              if data["audio"]: args.append("/sound")
+              if data["microphone"]: args.append("/microphone")
+              try:
+                  log = open("/tmp/thinclient-rdp.log", "w", buffering=1)
+                  proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+                                          text=True, start_new_session=True)
+                  proc.stdin.write(self.password.get_text() + "\n")
+                  proc.stdin.flush(); proc.stdin.close()
+                  self.password.set_text("")
+                  Gtk.main_quit()
+              except Exception:
+                  self.password.set_text("")
+                  self.status.set_markup("<span foreground='red'>Unable to start Remote Desktop.</span>")
+      
+      window = RDPWindow()
+      window.show_all()
+      window.computer.grab_focus()
+      Gtk.main()
+      PY
+      chmod 755 /usr/local/bin/thinclient-rdp
+      
+      # Password prompt and connection launcher for saved RDP profiles.
+      cat > /usr/local/bin/thinclient-rdp-profile <<'PY'
+      #!/usr/bin/python3
+      import gi, json, os, subprocess, sys
+      gi.require_version("Gtk", "3.0")
+      from gi.repository import Gtk
+      if len(sys.argv) != 2:
+          raise SystemExit(1)
+      PROFILE = os.path.abspath(sys.argv[1])
+      try:
+          with open(PROFILE, "r", encoding="utf-8") as f:
+              settings = json.load(f)
+      except Exception:
+          raise SystemExit(1)
+      
+      class PasswordDialog(Gtk.Window):
+          def __init__(self):
+              super().__init__(title="Remote Desktop")
+              self.set_default_size(460, 220)
+              self.set_position(Gtk.WindowPosition.CENTER)
+              self.set_resizable(False)
+              self.set_border_width(24)
+              self.connect("destroy", Gtk.main_quit)
+              box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+              self.add(box)
+              title = Gtk.Label(); title.set_markup("<span size='x-large' weight='bold'>Remote Desktop</span>")
+              box.pack_start(title, False, False, 0)
+              computer = str(settings.get("computer", "")); port = str(settings.get("port", "3389"))
+              box.pack_start(Gtk.Label(label=f"{computer}:{port}"), False, False, 0)
+              self.password = Gtk.Entry(); self.password.set_visibility(False); self.password.set_invisible_char("●")
+              self.password.set_placeholder_text("Password"); self.password.set_activates_default(True)
+              box.pack_start(self.password, False, False, 0)
+              buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+              cancel = Gtk.Button(label="Cancel"); connect = Gtk.Button(label="Connect")
+              cancel.set_size_request(120, 40); connect.set_size_request(120, 40)
+              cancel.connect("clicked", lambda *_: Gtk.main_quit()); connect.connect("clicked", self.connect_rdp)
+              buttons.pack_end(connect, False, False, 0); buttons.pack_end(cancel, False, False, 0)
+              box.pack_end(buttons, False, False, 0); self.set_default(connect)
+      
+          def connect_rdp(self, _button):
+              data = settings
+              computer = str(data.get("computer", "")).strip(); port = str(data.get("port", "3389")).strip()
+              args = ["/usr/bin/xfreerdp3", f"/v:{computer}", f"/port:{port}", "/cert:tofu", "/from-stdin:force"]
+              if data.get("username"): args.append(f"/u:{data['username']}")
+              if data.get("domain"): args.append(f"/d:{data['domain']}")
+              if data.get("network"): args.append(f"/network:{data['network']}")
+              if data.get("scale"): args.append(f"/scale:{data['scale']}")
+              if data.get("fullscreen", True): args.append("/f")
+              if data.get("multimon", False): args.append("/multimon")
+              if data.get("dynamic_resolution", True): args.append("+dynamic-resolution")
+              elif data.get("resolution"): args.append(f"/size:{data['resolution']}")
+              if data.get("clipboard", True): args.append("+clipboard")
+              if data.get("audio", True): args.append("/sound")
+              if data.get("microphone", False): args.append("/microphone")
+              try:
+                  log = open("/tmp/thinclient-rdp.log", "w", buffering=1)
+                  proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+                                          text=True, start_new_session=True)
+                  proc.stdin.write(self.password.get_text() + "\n"); proc.stdin.flush(); proc.stdin.close()
+                  self.password.set_text(""); Gtk.main_quit()
+              except Exception:
+                  self.password.set_text("")
+      
+      window = PasswordDialog(); window.show_all(); window.password.grab_focus(); Gtk.main()
+      PY
+      chmod 755 /usr/local/bin/thinclient-rdp-profile
+      
+      # Context-menu operations for saved RDP shortcuts.
+      cat > /usr/local/bin/thinclient-rdp-shortcut <<'PY'
+      #!/usr/bin/python3
+      import configparser, gi, os, re, shlex, shutil, subprocess, sys
+      gi.require_version("Gtk", "3.0")
+      from gi.repository import Gtk
+      
+      def error(message):
+          d = Gtk.MessageDialog(modal=True, message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK, text=message)
+          d.run(); d.destroy()
+      
+      def load_desktop(path):
+          c = configparser.ConfigParser(interpolation=None); c.optionxform = str; c.read(path)
+          if not c.has_section("Desktop Entry"):
+              raise RuntimeError("Invalid connection shortcut.")
+          return c
+      
+      def get_profile(config):
+          args = shlex.split(config["Desktop Entry"].get("Exec", ""))
+          if len(args) < 2 or args[0] != "/usr/local/bin/thinclient-rdp-profile":
+              raise RuntimeError("This is not a Thin Client RDP connection.")
+          return args[1]
+      
+      def mark_trusted(path):
+          subprocess.run(["/usr/bin/gio", "set", "-t", "string", path, "metadata::trusted", "true"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+      
+      def save_desktop(config, path):
+          with open(path, "w", encoding="utf-8") as f:
+              config.write(f, space_around_delimiters=False)
+          os.chmod(path, 0o755); mark_trusted(path)
+      
+      def safe_name(value):
+          return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._") or "Connection"
+      
+      def unique_path(path):
+          if not os.path.exists(path): return path
+          root, ext = os.path.splitext(path); n = 2
+          while True:
+              candidate = f"{root}-{n}{ext}"
+              if not os.path.exists(candidate): return candidate
+              n += 1
+      
+      def start_connection(desktop):
+          c = load_desktop(desktop); subprocess.Popen(["/usr/local/bin/thinclient-rdp-profile", get_profile(c)], start_new_session=True)
+      
+      def edit_connection(desktop):
+          c = load_desktop(desktop); subprocess.Popen(["/usr/local/bin/thinclient-rdp", "--edit", get_profile(c)], start_new_session=True)
+      
+      def copy_connection(desktop):
+          c = load_desktop(desktop); e = c["Desktop Entry"]; profile = get_profile(c)
+          stem = os.path.splitext(os.path.basename(profile))[0]
+          new_profile = unique_path(os.path.join(os.path.dirname(profile), stem + "-copy.json"))
+          shutil.copy2(profile, new_profile); os.chmod(new_profile, 0o600)
+          new_name = e.get("Name", "Remote Desktop") + " Copy"
+          new_desktop = unique_path(os.path.join(os.path.dirname(desktop), "RDP-" + safe_name(new_name) + ".desktop"))
+          e["Name"] = new_name; e["Exec"] = "/usr/local/bin/thinclient-rdp-profile " + new_profile
+          save_desktop(c, new_desktop)
+      
+      def rename_connection(desktop):
+          c = load_desktop(desktop); e = c["Desktop Entry"]; current = e.get("Name", "Remote Desktop")
+          d = Gtk.Dialog(title="Rename Connection", flags=Gtk.DialogFlags.MODAL)
+          d.add_button("Cancel", Gtk.ResponseType.CANCEL); d.add_button("Rename", Gtk.ResponseType.OK)
+          box = d.get_content_area(); box.set_border_width(18); box.set_spacing(12)
+          label = Gtk.Label(label="Connection Name"); label.set_halign(Gtk.Align.START)
+          entry = Gtk.Entry(); entry.set_text(current); entry.set_activates_default(True)
+          box.pack_start(label, False, False, 0); box.pack_start(entry, False, False, 0)
+          d.set_default_response(Gtk.ResponseType.OK); d.show_all(); response = d.run(); new_name = entry.get_text().strip(); d.destroy()
+          if response != Gtk.ResponseType.OK or not new_name: return
+          new_path = os.path.join(os.path.dirname(desktop), "RDP-" + safe_name(new_name) + ".desktop")
+          if os.path.abspath(new_path) != os.path.abspath(desktop) and os.path.exists(new_path):
+              error("A connection with this name already exists."); return
+          e["Name"] = new_name
+          if os.path.abspath(new_path) != os.path.abspath(desktop):
+              os.rename(desktop, new_path)
+              desktop = new_path
+          save_desktop(c, desktop)
+      
+      def delete_connection(desktop):
+          c = load_desktop(desktop); profile = get_profile(c); name = c["Desktop Entry"].get("Name", "Remote Desktop")
+          d = Gtk.MessageDialog(modal=True, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO,
+                                text=f"Delete '{name}'?")
+          d.format_secondary_text("The saved Remote Desktop connection will be removed.")
+          response = d.run(); d.destroy()
+          if response != Gtk.ResponseType.YES: return
+          for path in (desktop, profile):
+              try: os.remove(path)
+              except FileNotFoundError: pass
+      
+      if len(sys.argv) != 3:
+          raise SystemExit(1)
+      cmd, desktop = sys.argv[1], os.path.abspath(sys.argv[2])
+      try:
+          {"start": start_connection, "edit": edit_connection, "copy": copy_connection,
+           "rename": rename_connection, "delete": delete_connection}[cmd](desktop)
+      except Exception as exc:
+          error(str(exc))
+      PY
+      chmod 755 /usr/local/bin/thinclient-rdp-shortcut
+      
+      # Ubuntu 24.04 ships Nemo 6.0.2. Build the desktop Create/Arrange
+      # submenus in nemo-python instead of relying on actions-tree.json.
+      # Remove legacy action/layout files in case this script is reused on an
+      # image from an earlier development iteration.
+      rm -f \
+          /home/kiosk/.local/share/nemo/actions/10-citrix.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/20-rdp.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/30-omnissa-horizon.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/31-arrange-name.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/32-arrange-type.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/33-arrange-size.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/34-arrange-date.nemo_action \
+          /home/kiosk/.config/nemo/actions/actions-tree.json
+
+      # Nemo Python extension: saved RDP shortcut menu plus desktop submenus.
+      cat > /home/kiosk/.local/share/nemo-python/extensions/thinclient_connections.py <<'PY'
+      #!/usr/bin/python3
+      import gi
+      import os
+      import subprocess
+
+      gi.require_version("Nemo", "3.0")
+      from gi.repository import GObject, Nemo
+
+
+      class ThinClientConnections(GObject.GObject, Nemo.MenuProvider):
+
+          def get_file_items(self, *args):
+              items_selected = args[-1] if args else []
+              if not items_selected or len(items_selected) != 1:
+                  return []
+
+              info = items_selected[0]
+              if info.get_uri_scheme() != "file":
+                  return []
+
+              try:
+                  path = info.get_location().get_path()
+              except Exception:
+                  return []
+
+              if not path:
+                  return []
+
+              path = os.path.abspath(path)
+              desktop = os.path.abspath(os.path.expanduser("~/Desktop"))
+              filename = os.path.basename(path)
+
+              if os.path.dirname(path) != desktop:
+                  return []
+              if not (filename.startswith("RDP-") and filename.endswith(".desktop")):
+                  return []
+
+              result = []
+              for command, label, icon in [
+                  ("start", "Start", "media-playback-start-symbolic"),
+                  ("edit", "Edit", "document-edit-symbolic"),
+                  ("copy", "Copy", "edit-copy-symbolic"),
+                  ("rename", "Rename", "edit-rename-symbolic"),
+                  ("delete", "Delete", "edit-delete-symbolic"),
+              ]:
+                  item = Nemo.MenuItem(
+                      name=f"ThinClient::{command}",
+                      label=label,
+                      tip="",
+                      icon=icon,
+                  )
+                  item.connect("activate", self.run_rdp_command, command, path)
+                  result.append(item)
+              return result
+
+          def get_background_items(self, *args):
+              create_item = Nemo.MenuItem(
+                  name="ThinClient::Create",
+                  label="Create",
+                  tip="",
+                  icon="list-add-symbolic",
+              )
+              create_menu = Nemo.Menu()
+
+              for key, label, icon, command in [
+                  ("Citrix", "Citrix", "network-workgroup-symbolic", ["/usr/local/bin/thinclient-citrix"]),
+                  ("RDP", "RDP", "computer-symbolic", ["/usr/local/bin/thinclient-rdp", "--create"]),
+                  ("Horizon", "Omnissa Horizon", "video-display-symbolic", ["/usr/local/bin/thinclient-horizon"]),
+              ]:
+                  item = Nemo.MenuItem(
+                      name=f"ThinClient::Create::{key}",
+                      label=label,
+                      tip="",
+                      icon=icon,
+                  )
+                  item.connect("activate", self.run_background_command, command)
+                  create_menu.append_item(item)
+              create_item.set_submenu(create_menu)
+
+              arrange_item = Nemo.MenuItem(
+                  name="ThinClient::Arrange",
+                  label="Arrange",
+                  tip="",
+                  icon="view-sort-ascending-symbolic",
+              )
+              arrange_menu = Nemo.Menu()
+
+              for label, mode in [
+                  ("By Name", "name"),
+                  ("By Type", "type"),
+                  ("By Size", "size"),
+                  ("By Modification Date", "mtime"),
+              ]:
+                  item = Nemo.MenuItem(
+                      name=f"ThinClient::Arrange::{mode}",
+                      label=label,
+                      tip="",
+                      icon="",
+                  )
+                  item.connect(
+                      "activate",
+                      self.run_background_command,
+                      ["/usr/local/bin/thinclient-arrange", mode],
+                  )
+                  arrange_menu.append_item(item)
+              arrange_item.set_submenu(arrange_menu)
+
+              return [create_item, arrange_item]
+
+          def run_rdp_command(self, menu_item, command, path):
+              subprocess.Popen(
+                  ["/usr/local/bin/thinclient-rdp-shortcut", command, path],
+                  start_new_session=True,
+              )
+
+          def run_background_command(self, menu_item, command):
+              subprocess.Popen(command, start_new_session=True)
+      PY
+      chmod 644 /home/kiosk/.local/share/nemo-python/extensions/thinclient_connections.py
+
+      # Build a Nemo UI-resource overlay dynamically from the installed library.
+      mkdir -p /usr/local/share/thinclient/nemo-overlay
+      RESOURCE_CONTAINER=""
+      for candidate in /usr/lib/x86_64-linux-gnu/libnemo-extension.so*; do
+          [ -f "$candidate" ] || continue
+          if gresource list "$candidate" 2>/dev/null | grep -q '^/org/nemo/nemo-directory-view-ui.xml$'; then
+              RESOURCE_CONTAINER="$candidate"
+              break
+          fi
+      done
+      if [ -z "$RESOURCE_CONTAINER" ]; then
+          echo "Unable to locate Nemo UI resource" >&2
+          exit 1
+      fi
+      gresource extract "$RESOURCE_CONTAINER" /org/nemo/nemo-directory-view-ui.xml > /usr/local/share/thinclient/nemo-overlay/nemo-directory-view-ui.xml
+      python3 - <<'PY'
+      import xml.etree.ElementTree as ET
+      path = "/usr/local/share/thinclient/nemo-overlay/nemo-directory-view-ui.xml"
+      tree = ET.parse(path)
+      root = tree.getroot()
+      background = root.find("./popup[@name='background']")
+      selection = root.find("./popup[@name='selection']")
+      if background is None or selection is None:
+          raise SystemExit("Nemo popup definitions not found")
+      for child in list(background):
+          background.remove(child)
+      ph = ET.SubElement(background, "placeholder", {"name": "Before Zoom Items"})
+      obj = ET.SubElement(ph, "placeholder", {"name": "New Object Items"})
+      ET.SubElement(obj, "placeholder", {"name": "ActionsPlaceholder"})
+      for child in list(selection):
+          selection.remove(child)
+      ET.SubElement(selection, "placeholder", {"name": "Extension Actions"})
+      ET.indent(tree, space="    ")
+      tree.write(path, encoding="unicode", xml_declaration=False)
+      PY
+      
+      # Modern VDI Shell v4 customer-facing applications.
+      cat > /usr/local/bin/thinclient-system-info <<'PY'
+      #!/usr/bin/python3
+      import gi
+      import os
+      import platform
+      import subprocess
+
+      gi.require_version("Gtk", "4.0")
+      gi.require_version("Adw", "1")
+
+      from gi.repository import Gtk, Adw
+
+
+      def command(args):
+          try:
+              return subprocess.check_output(
+                  args,
+                  text=True,
+                  stderr=subprocess.DEVNULL
+              ).strip()
+          except Exception:
+              return ""
+
+
+      def os_name():
+          try:
+              values = {}
+              with open("/etc/os-release", encoding="utf-8") as f:
+                  for line in f:
+                      if "=" in line:
+                          k, v = line.rstrip().split("=", 1)
+                          values[k] = v.strip('"')
+              return values.get("PRETTY_NAME", "Ubuntu")
+          except Exception:
+              return "Ubuntu"
+
+
+      def cpu_name():
+          for line in command(["lscpu"]).splitlines():
+              if line.startswith("Model name:"):
+                  return line.split(":", 1)[1].strip()
+          return platform.processor() or "Unknown"
+
+
+      def memory_total():
+          try:
+              with open("/proc/meminfo", encoding="utf-8") as f:
+                  for line in f:
+                      if line.startswith("MemTotal:"):
+                          kb = int(line.split()[1])
+                          return f"{kb / 1024 / 1024:.1f} GiB"
+          except Exception:
+              pass
+          return "Unknown"
+
+
+      def network_information():
+          interface = ""
+          gateway = ""
+
+          route = command(["ip", "route", "show", "default"])
+
+          if route:
+              parts = route.split()
+              if "dev" in parts:
+                  interface = parts[parts.index("dev") + 1]
+              if "via" in parts:
+                  gateway = parts[parts.index("via") + 1]
+
+          ipv4 = ""
+          mac = ""
+
+          if interface:
+              address = command(
+                  ["ip", "-4", "-o", "addr", "show", "dev", interface]
+              )
+
+              if address:
+                  fields = address.split()
+                  if "inet" in fields:
+                      ipv4 = fields[fields.index("inet") + 1].split("/")[0]
+
+              try:
+                  with open(
+                      f"/sys/class/net/{interface}/address",
+                      encoding="utf-8"
+                  ) as f:
+                      mac = f.read().strip()
+              except Exception:
+                  pass
+
+          return interface, ipv4, gateway, mac
+
+
+      def uptime():
+          try:
+              with open("/proc/uptime", encoding="utf-8") as f:
+                  seconds = int(float(f.read().split()[0]))
+              days, seconds = divmod(seconds, 86400)
+              hours, seconds = divmod(seconds, 3600)
+              minutes = seconds // 60
+
+              parts = []
+              if days:
+                  parts.append(f"{days}d")
+              if hours:
+                  parts.append(f"{hours}h")
+              parts.append(f"{minutes}m")
+              return " ".join(parts)
+
+          except Exception:
+              return "Unknown"
+
+
+      def add_row(group, title, value, icon):
+          row = Adw.ActionRow(
+              title=title,
+              subtitle=value or "Not available"
+          )
+
+          image = Gtk.Image.new_from_icon_name(icon)
+          image.set_pixel_size(22)
+          row.add_prefix(image)
+          group.add(row)
+
+
+      class SystemInformation(Adw.Application):
+
+          def __init__(self):
+              super().__init__(
+                  application_id="com.vdi.SystemInformation"
+              )
+
+          def do_activate(self):
+              Adw.StyleManager.get_default().set_color_scheme(
+                  Adw.ColorScheme.FORCE_LIGHT
+              )
+
+              win = Adw.ApplicationWindow(application=self)
+              win.set_title("System Information")
+              win.set_default_size(760, 650)
+
+              root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+              header = Adw.HeaderBar()
+              title = Adw.WindowTitle(
+                  title="System Information",
+                  subtitle="VDI Thin Client"
+              )
+              header.set_title_widget(title)
+              root.append(header)
+
+              page = Adw.PreferencesPage()
+              page.set_vexpand(True)
+
+              device = Adw.PreferencesGroup(title="Device")
+              add_row(device, "Device name", platform.node(), "computer-symbolic")
+              add_row(device, "Operating system", os_name(), "drive-harddisk-symbolic")
+              add_row(device, "Kernel", platform.release(), "application-x-firmware-symbolic")
+              page.add(device)
+
+              hardware = Adw.PreferencesGroup(title="Hardware")
+              add_row(hardware, "Processor", cpu_name(), "applications-system-symbolic")
+              add_row(hardware, "Memory", memory_total(), "media-flash-symbolic")
+              page.add(hardware)
+
+              interface, ipv4, gateway, mac = network_information()
+
+              network = Adw.PreferencesGroup(title="Network")
+              add_row(
+                  network,
+                  "Status",
+                  "Connected" if ipv4 else "Disconnected",
+                  "network-wired-symbolic"
+              )
+              add_row(network, "Interface", interface, "network-wired-symbolic")
+              add_row(network, "IPv4 address", ipv4, "network-transmit-receive-symbolic")
+              add_row(network, "Gateway", gateway, "network-server-symbolic")
+              add_row(network, "MAC address", mac, "network-workgroup-symbolic")
+              page.add(network)
+
+              system = Adw.PreferencesGroup(title="System")
+              add_row(system, "Uptime", uptime(), "preferences-system-time-symbolic")
+              page.add(system)
+
+              root.append(page)
+              win.set_content(root)
+              win.present()
+
+
+      app = SystemInformation()
+      app.run()
+      PY
+      chmod 755 /usr/local/bin/thinclient-system-info
+
+      cat > /usr/local/bin/thinclient-control-panel <<'PY'
+      #!/usr/bin/python3
+
+      import gi
+      import os
+      import re
+      import subprocess
+
+      gi.require_version("Gtk", "4.0")
+      gi.require_version("Adw", "1")
+
+      from gi.repository import Gtk, Adw
+
+
+      ADMIN_MARKERS = [
+          os.path.expanduser("~/.cache/thinclient/admin-mode"),
+          f"/run/user/{os.getuid()}/thinclient-admin-mode",
+      ]
+
+
+      def command(args):
+          try:
+              return subprocess.check_output(
+                  args,
+                  text=True,
+                  stderr=subprocess.DEVNULL
+              ).strip()
+          except Exception:
+              return ""
+
+
+      def admin_enabled():
+          return any(os.path.exists(x) for x in ADMIN_MARKERS)
+
+
+      def network_info():
+          interface = ""
+          gateway = ""
+          address = ""
+          dns = ""
+
+          route = command(["ip", "route", "show", "default"])
+
+          if route:
+              parts = route.split()
+              if "dev" in parts:
+                  interface = parts[parts.index("dev") + 1]
+              if "via" in parts:
+                  gateway = parts[parts.index("via") + 1]
+
+          if interface:
+              raw = command([
+                  "ip",
+                  "-4",
+                  "-o",
+                  "addr",
+                  "show",
+                  "dev",
+                  interface
+              ])
+
+              match = re.search(r"\binet\s+([0-9.]+)/", raw)
+              if match:
+                  address = match.group(1)
+
+          resolvectl = command(["resolvectl", "dns"])
+
+          if resolvectl:
+              lines = [
+                  x.strip()
+                  for x in resolvectl.splitlines()
+                  if interface and interface in x
+              ]
+              if lines:
+                  dns = lines[0].split(":", 1)[-1].strip()
+
+          return interface, address, gateway, dns
+
+
+      def display_info():
+          raw = command(["xrandr", "--current"])
+          connected = []
+
+          for line in raw.splitlines():
+              if " connected" not in line:
+                  continue
+
+              name = line.split()[0]
+              resolution = ""
+
+              match = re.search(r"(\d+x\d+)\+\d+\+\d+", line)
+              if match:
+                  resolution = match.group(1)
+
+              connected.append((name, resolution or "Connected"))
+
+          return connected
+
+
+      def keyboard_info():
+          raw = command(["setxkbmap", "-query"])
+          layout = "us"
+          variant = ""
+
+          for line in raw.splitlines():
+              if line.startswith("layout:"):
+                  layout = line.split(":", 1)[1].strip()
+              elif line.startswith("variant:"):
+                  variant = line.split(":", 1)[1].strip()
+
+          return layout, variant
+
+
+      def volume_percent():
+          raw = command([
+              "pactl",
+              "get-sink-volume",
+              "@DEFAULT_SINK@"
+          ])
+
+          for token in raw.split():
+              if token.endswith("%"):
+                  try:
+                      return int(token[:-1])
+                  except ValueError:
+                      pass
+
+          return 50
+
+
+      def add_arrow(row):
+          image = Gtk.Image.new_from_icon_name("go-next-symbolic")
+          image.set_pixel_size(16)
+          row.add_suffix(image)
+
+
+      def add_icon(row, icon):
+          image = Gtk.Image.new_from_icon_name(icon)
+          image.set_pixel_size(22)
+          row.add_prefix(image)
+
+
+      class ControlCenter(Adw.Application):
+
+          def __init__(self):
+              super().__init__(
+                  application_id="com.vdi.ControlCenter"
+              )
+
+              self.window = None
+              self.stack = None
+              self.back_button = None
+              self.window_title = None
+
+          def do_activate(self):
+              Adw.StyleManager.get_default().set_color_scheme(
+                  Adw.ColorScheme.FORCE_LIGHT
+              )
+
+              self.window = Adw.ApplicationWindow(
+                  application=self
+              )
+
+              self.window.set_title("Control Center")
+              self.window.set_default_size(760, 680)
+
+              root = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL
+              )
+
+              header = Adw.HeaderBar()
+              header.set_show_end_title_buttons(False)
+
+              self.window_title = Adw.WindowTitle(
+                  title="Control Center",
+                  subtitle="VDI Thin Client"
+              )
+
+              header.set_title_widget(
+                  self.window_title
+              )
+
+              self.back_button = Gtk.Button(
+                  icon_name="go-previous-symbolic"
+              )
+
+              self.back_button.set_tooltip_text("Back")
+              self.back_button.set_visible(False)
+
+              self.back_button.connect(
+                  "clicked",
+                  lambda *_: self.show_page(
+                      "overview",
+                      "Control Center",
+                      "VDI Thin Client"
+                  )
+              )
+
+              header.pack_start(
+                  self.back_button
+              )
+
+              close_button = Gtk.Button(
+                  icon_name="window-close-symbolic"
+              )
+
+              close_button.set_tooltip_text("Close")
+
+              close_button.connect(
+                  "clicked",
+                  lambda *_: self.window.close()
+              )
+
+              header.pack_end(
+                  close_button
+              )
+
+              root.append(header)
+
+              self.stack = Gtk.Stack()
+
+              self.stack.set_transition_type(
+                  Gtk.StackTransitionType.SLIDE_LEFT_RIGHT
+              )
+
+              self.stack.set_transition_duration(180)
+              self.stack.set_vexpand(True)
+
+              root.append(self.stack)
+
+              self.build_overview()
+              self.build_network()
+              self.build_sound()
+              self.build_display()
+              self.build_keyboard()
+              self.build_mouse()
+              self.build_admin()
+
+              self.window.set_content(root)
+
+              self.show_page(
+                  "overview",
+                  "Control Center",
+                  "VDI Thin Client"
+              )
+
+              self.window.present()
+
+          def show_page(
+              self,
+              name,
+              title,
+              subtitle="Settings"
+          ):
+              self.stack.set_visible_child_name(name)
+              self.window_title.set_title(title)
+              self.window_title.set_subtitle(subtitle)
+              self.back_button.set_visible(name != "overview")
+
+          def nav_row(
+              self,
+              group,
+              title,
+              subtitle,
+              icon,
+              page,
+              page_title
+          ):
+              row = Adw.ActionRow(
+                  title=title,
+                  subtitle=subtitle
+              )
+
+              row.set_activatable(True)
+              add_icon(row, icon)
+              add_arrow(row)
+
+              row.connect(
+                  "activated",
+                  lambda *_: self.show_page(
+                      page,
+                      page_title,
+                      "VDI Thin Client"
+                  )
+              )
+
+              group.add(row)
+              return row
+
+          def build_overview(self):
+              interface, address, gateway, dns = network_info()
+
+              page = Adw.PreferencesPage()
+
+              connectivity = Adw.PreferencesGroup(
+                  title="Connectivity"
+              )
+
+              self.nav_row(
+                  connectivity,
+                  "Network",
+                  f"Connected · {address}" if address else "Disconnected",
+                  "network-wired-symbolic",
+                  "network",
+                  "Network"
+              )
+
+              page.add(connectivity)
+
+              devices = Adw.PreferencesGroup(title="Devices")
+
+              self.nav_row(
+                  devices,
+                  "Sound",
+                  f"{volume_percent()}%",
+                  "audio-volume-high-symbolic",
+                  "sound",
+                  "Sound"
+              )
+
+              displays = display_info()
+              display_subtitle = (
+                  displays[0][1]
+                  if displays
+                  else "No display information"
+              )
+
+              self.nav_row(
+                  devices,
+                  "Display",
+                  display_subtitle,
+                  "video-display-symbolic",
+                  "display",
+                  "Display"
+              )
+
+              layout, variant = keyboard_info()
+
+              self.nav_row(
+                  devices,
+                  "Keyboard",
+                  "English (US)" if layout == "us" else layout.upper(),
+                  "input-keyboard-symbolic",
+                  "keyboard",
+                  "Keyboard"
+              )
+
+              self.nav_row(
+                  devices,
+                  "Mouse",
+                  "Pointer settings",
+                  "input-mouse-symbolic",
+                  "mouse",
+                  "Mouse"
+              )
+
+              page.add(devices)
+
+              administration = Adw.PreferencesGroup(
+                  title="Administration"
+              )
+
+              self.nav_row(
+                  administration,
+                  "Administrator Mode",
+                  "Enabled" if admin_enabled() else "Restricted",
+                  (
+                      "changes-allow-symbolic"
+                      if admin_enabled()
+                      else "changes-prevent-symbolic"
+                  ),
+                  "admin",
+                  "Administrator Mode"
+              )
+
+              page.add(administration)
+
+              self.stack.add_named(page, "overview")
+
+          def build_network(self):
+              interface, address, gateway, dns = network_info()
+
+              page = Adw.PreferencesPage()
+
+              connection = Adw.PreferencesGroup(
+                  title="Connection"
+              )
+
+              rows = [
+                  (
+                      "Status",
+                      "Connected" if address else "Disconnected",
+                      "network-wired-symbolic"
+                  ),
+                  (
+                      "Interface",
+                      interface or "Not available",
+                      "network-wired-symbolic"
+                  ),
+                  (
+                      "IPv4 address",
+                      address or "Not assigned",
+                      "network-transmit-receive-symbolic"
+                  ),
+              ]
+
+              for title, subtitle, icon in rows:
+                  row = Adw.ActionRow(
+                      title=title,
+                      subtitle=subtitle
+                  )
+                  add_icon(row, icon)
+                  connection.add(row)
+
+              page.add(connection)
+
+              ipv4 = Adw.PreferencesGroup(title="IPv4")
+
+              for title, value in [
+                  ("Gateway", gateway),
+                  ("DNS servers", dns),
+              ]:
+                  row = Adw.ActionRow(
+                      title=title,
+                      subtitle=value or "Not available"
+                  )
+                  ipv4.add(row)
+
+              page.add(ipv4)
+
+              note = Adw.PreferencesGroup(
+                  title="Configuration"
+              )
+
+              row = Adw.ActionRow(
+                  title=(
+                      "Administrator access required"
+                      if not admin_enabled()
+                      else "Administrator Mode enabled"
+                  ),
+                  subtitle=(
+                      "Network configuration is read-only in kiosk mode."
+                      if not admin_enabled()
+                      else
+                      "Editable network configuration will be added here."
+                  )
+              )
+
+              add_icon(
+                  row,
+                  (
+                      "changes-prevent-symbolic"
+                      if not admin_enabled()
+                      else "changes-allow-symbolic"
+                  )
+              )
+
+              note.add(row)
+              page.add(note)
+
+              self.stack.add_named(page, "network")
+
+          def build_sound(self):
+              page = Adw.PreferencesPage()
+
+              group = Adw.PreferencesGroup(title="Output")
+
+              row = Adw.ActionRow(
+                  title="Volume",
+                  subtitle="Default audio output"
+              )
+
+              add_icon(
+                  row,
+                  "audio-volume-high-symbolic"
+              )
+
+              scale = Gtk.Scale.new_with_range(
+                  Gtk.Orientation.HORIZONTAL,
+                  0,
+                  100,
+                  1
+              )
+
+              scale.set_size_request(240, -1)
+              scale.set_value(volume_percent())
+              scale.set_draw_value(False)
+
+              def changed(widget):
+                  subprocess.Popen([
+                      "pactl",
+                      "set-sink-volume",
+                      "@DEFAULT_SINK@",
+                      f"{int(widget.get_value())}%"
+                  ])
+
+              scale.connect("value-changed", changed)
+              row.add_suffix(scale)
+
+              group.add(row)
+              page.add(group)
+
+              self.stack.add_named(page, "sound")
+
+          def build_display(self):
+              page = Adw.PreferencesPage()
+
+              group = Adw.PreferencesGroup(
+                  title="Connected Displays"
+              )
+
+              displays = display_info()
+
+              if displays:
+                  for name, resolution in displays:
+                      row = Adw.ActionRow(
+                          title=name,
+                          subtitle=resolution
+                      )
+                      add_icon(row, "video-display-symbolic")
+                      group.add(row)
+              else:
+                  row = Adw.ActionRow(
+                      title="Display",
+                      subtitle="No display information available"
+                  )
+                  group.add(row)
+
+              page.add(group)
+
+              info = Adw.PreferencesGroup(
+                  title="Configuration"
+              )
+
+              row = Adw.ActionRow(
+                  title=(
+                      "Administrator access required"
+                      if not admin_enabled()
+                      else "Administrator Mode enabled"
+                  ),
+                  subtitle=(
+                      "Display configuration is locked in kiosk mode."
+                      if not admin_enabled()
+                      else
+                      "Display configuration controls will be added here."
+                  )
+              )
+
+              info.add(row)
+              page.add(info)
+
+              self.stack.add_named(page, "display")
+
+          def build_keyboard(self):
+              page = Adw.PreferencesPage()
+              layout, variant = keyboard_info()
+
+              group = Adw.PreferencesGroup(title="Keyboard")
+
+              row = Adw.ActionRow(
+                  title="Layout",
+                  subtitle="English (US)" if layout == "us" else layout.upper()
+              )
+
+              add_icon(row, "input-keyboard-symbolic")
+              group.add(row)
+
+              row = Adw.ActionRow(
+                  title="Variant",
+                  subtitle=variant or "Default"
+              )
+
+              group.add(row)
+              page.add(group)
+
+              self.stack.add_named(page, "keyboard")
+
+          def build_mouse(self):
+              page = Adw.PreferencesPage()
+
+              group = Adw.PreferencesGroup(title="Mouse")
+
+              row = Adw.ActionRow(
+                  title="Pointer",
+                  subtitle="System default"
+              )
+
+              add_icon(row, "input-mouse-symbolic")
+              group.add(row)
+
+              row = Adw.ActionRow(
+                  title="Configuration",
+                  subtitle=(
+                      "Administrator access required"
+                      if not admin_enabled()
+                      else "Administrator Mode enabled"
+                  )
+              )
+
+              group.add(row)
+              page.add(group)
+
+              self.stack.add_named(page, "mouse")
+
+          def build_admin(self):
+              page = Adw.PreferencesPage()
+
+              group = Adw.PreferencesGroup(
+                  title="Administrator Mode"
+              )
+
+              if admin_enabled():
+                  status = Adw.ActionRow(
+                      title="Administrator Mode",
+                      subtitle="Enabled"
+                  )
+
+                  add_icon(
+                      status,
+                      "changes-allow-symbolic"
+                  )
+
+                  group.add(status)
+
+                  button = Gtk.Button(
+                      label="Exit Administrator Mode"
+                  )
+
+                  button.add_css_class(
+                      "destructive-action"
+                  )
+
+                  button.set_margin_top(12)
+                  button.set_margin_bottom(12)
+
+                  button.connect(
+                      "clicked",
+                      lambda *_: subprocess.Popen(
+                          ["/usr/local/bin/thinclient-exit-admin"]
+                      )
+                  )
+
+                  group.add(button)
+
+              else:
+                  status = Adw.ActionRow(
+                      title="Administrator Mode",
+                      subtitle="Restricted"
+                  )
+
+                  add_icon(
+                      status,
+                      "changes-prevent-symbolic"
+                  )
+
+                  group.add(status)
+
+                  button = Gtk.Button(
+                      label="Unlock Administrator Mode"
+                  )
+
+                  button.add_css_class(
+                      "suggested-action"
+                  )
+
+                  button.set_margin_top(12)
+                  button.set_margin_bottom(12)
+
+                  button.connect(
+                      "clicked",
+                      lambda *_: subprocess.Popen(
+                          ["/usr/local/bin/thinclient-admin-mode"]
+                      )
+                  )
+
+                  group.add(button)
+
+              page.add(group)
+
+              self.stack.add_named(page, "admin")
+
+
+      app = ControlCenter()
+      app.run()
+      PY
+      chmod 755 /usr/local/bin/thinclient-control-panel
+
+      # Administrator authentication uses the vdi account through PAM. The kiosk
+      # account may invoke only this exact PAM authentication command and a small,
+      # predefined administrator-tool backend.
+      cat > /usr/local/bin/thinclient-admin-mode <<'PY'
+      #!/usr/bin/python3
+
+      import gi
+      import os
+      import subprocess
+
+      gi.require_version("Gtk", "4.0")
+      gi.require_version("Adw", "1")
+
+      from gi.repository import Gtk, Adw
+
+
+      RUNTIME_DIR = os.environ.get(
+          "XDG_RUNTIME_DIR",
+          f"/run/user/{os.getuid()}"
+      )
+
+      MARKER = os.path.join(
+          RUNTIME_DIR,
+          "thinclient-admin-mode"
+      )
+
+
+      class AdministratorLogin(Adw.Application):
+
+          def __init__(self):
+              super().__init__(
+                  application_id="com.vdi.AdministratorLogin"
+              )
+
+              self.window = None
+              self.password = None
+              self.error_row = None
+              self.unlock_button = None
+
+          def do_activate(self):
+              Adw.StyleManager.get_default().set_color_scheme(
+                  Adw.ColorScheme.FORCE_LIGHT
+              )
+
+              self.window = Adw.ApplicationWindow(
+                  application=self
+              )
+
+              self.window.set_title(
+                  "Administrator Login"
+              )
+
+              self.window.set_default_size(
+                  520,
+                  330
+              )
+
+              self.window.set_resizable(False)
+
+              root = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL
+              )
+
+              header = Adw.HeaderBar()
+              header.set_show_end_title_buttons(False)
+
+              title = Adw.WindowTitle(
+                  title="Administrator Login",
+                  subtitle="VDI Thin Client"
+              )
+
+              header.set_title_widget(title)
+
+              close_button = Gtk.Button(
+                  icon_name="window-close-symbolic"
+              )
+
+              close_button.set_tooltip_text("Close")
+
+              close_button.connect(
+                  "clicked",
+                  lambda *_: self.window.close()
+              )
+
+              header.pack_end(close_button)
+
+              root.append(header)
+
+              page = Adw.PreferencesPage()
+              page.set_vexpand(True)
+
+              authentication = Adw.PreferencesGroup(
+                  title="Administrator Authentication",
+                  description=(
+                      "Enter the VDI administrator password "
+                      "to unlock administrative settings."
+                  )
+              )
+
+              self.password = Adw.PasswordEntryRow(
+                  title="Password"
+              )
+
+              self.password.connect(
+                  "entry-activated",
+                  lambda *_: self.authenticate()
+              )
+
+              authentication.add(
+                  self.password
+              )
+
+              self.error_row = Adw.ActionRow(
+                  title="Incorrect administrator password",
+                  subtitle="Please verify the password and try again."
+              )
+
+              error_icon = Gtk.Image.new_from_icon_name(
+                  "dialog-error-symbolic"
+              )
+
+              error_icon.set_pixel_size(22)
+              self.error_row.add_prefix(error_icon)
+              self.error_row.add_css_class("error")
+              self.error_row.set_visible(False)
+
+              authentication.add(
+                  self.error_row
+              )
+
+              page.add(authentication)
+              root.append(page)
+
+              actions = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=10
+              )
+
+              actions.set_margin_start(24)
+              actions.set_margin_end(24)
+              actions.set_margin_top(12)
+              actions.set_margin_bottom(24)
+
+              cancel = Gtk.Button(label="Cancel")
+              cancel.set_hexpand(True)
+
+              cancel.connect(
+                  "clicked",
+                  lambda *_: self.window.close()
+              )
+
+              self.unlock_button = Gtk.Button(
+                  label="Unlock Administrator Mode"
+              )
+
+              self.unlock_button.set_hexpand(True)
+              self.unlock_button.add_css_class(
+                  "suggested-action"
+              )
+
+              self.unlock_button.connect(
+                  "clicked",
+                  lambda *_: self.authenticate()
+              )
+
+              actions.append(cancel)
+              actions.append(self.unlock_button)
+              root.append(actions)
+
+              self.window.set_content(root)
+              self.window.present()
+              self.password.grab_focus()
+
+          def set_busy(self, busy):
+              self.password.set_sensitive(not busy)
+              self.unlock_button.set_sensitive(not busy)
+
+              if busy:
+                  self.unlock_button.set_label(
+                      "Authenticating…"
+                  )
+              else:
+                  self.unlock_button.set_label(
+                      "Unlock Administrator Mode"
+                  )
+
+          def authenticate(self):
+              password = self.password.get_text()
+              self.error_row.set_visible(False)
+
+              if not password:
+                  self.error_row.set_title(
+                      "Password required"
+                  )
+
+                  self.error_row.set_subtitle(
+                      "Enter the VDI administrator password."
+                  )
+
+                  self.error_row.set_visible(True)
+                  self.password.grab_focus()
+                  return
+
+              self.set_busy(True)
+
+              try:
+                  result = subprocess.run(
+                      [
+                          "sudo",
+                          "-n",
+                          "/usr/bin/pamtester",
+                          "login",
+                          "vdi",
+                          "authenticate"
+                      ],
+                      input=password + "\n",
+                      text=True,
+                      stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL,
+                      timeout=15
+                  )
+
+              except Exception:
+                  result = None
+
+              self.password.set_text("")
+
+              if result is not None and result.returncode == 0:
+                  os.makedirs(
+                      RUNTIME_DIR,
+                      mode=0o700,
+                      exist_ok=True
+                  )
+
+                  fd = os.open(
+                      MARKER,
+                      os.O_WRONLY |
+                      os.O_CREAT |
+                      os.O_TRUNC,
+                      0o600
+                  )
+
+                  os.close(fd)
+                  self.window.close()
+                  return
+
+              self.set_busy(False)
+
+              self.error_row.set_title(
+                  "Incorrect administrator password"
+              )
+
+              self.error_row.set_subtitle(
+                  "Please verify the password and try again."
+              )
+
+              self.error_row.set_visible(True)
+              self.password.grab_focus()
+
+
+      app = AdministratorLogin()
+      app.run()
+      PY
+      chmod 755 /usr/local/bin/thinclient-admin-mode
+
+      cat > /usr/local/bin/thinclient-exit-admin <<'EOF'
+      #!/bin/bash
+      set -u
+
+      RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+      MARKER="$RUNTIME/thinclient-admin-mode"
+      PIDFILE="$RUNTIME/thinclient-admin-terminal.pid"
+
+      if [ -f "$PIDFILE" ]; then
+          PID=$(cat "$PIDFILE" 2>/dev/null || true)
+
+          if [ -n "${PID:-}" ]; then
+              kill "$PID" 2>/dev/null || true
+          fi
+
+          rm -f "$PIDFILE"
+      fi
+
+      rm -f "$MARKER"
+      EOF
+      chmod 755 /usr/local/bin/thinclient-exit-admin
+
+      cat > /usr/local/bin/thinclient-admin-terminal <<'EOF'
+      #!/bin/bash
+      set -euo pipefail
+
+      RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+      MARKER="$RUNTIME/thinclient-admin-mode"
+      PIDFILE="$RUNTIME/thinclient-admin-terminal.pid"
+
+      [ -f "$MARKER" ] || exit 1
+
+      /usr/bin/xterm \
+          -title "Administrator Terminal" \
+          -e /bin/bash -lc \
+          'exec sudo -n /usr/local/sbin/thinclient-admin-tool terminal' &
+
+      XPID=$!
+      printf '%s\n' "$XPID" > "$PIDFILE"
+
+      cleanup() {
+          kill "$XPID" 2>/dev/null || true
+          rm -f "$PIDFILE"
+      }
+
+      trap cleanup EXIT INT TERM
+      wait "$XPID" || true
+      EOF
+      chmod 755 /usr/local/bin/thinclient-admin-terminal
+
+      cat > /usr/local/sbin/thinclient-admin-tool <<'EOF'
+      #!/bin/bash
+      set -euo pipefail
+
+      KUID=$(id -u kiosk)
+      MARKER="/run/user/$KUID/thinclient-admin-mode"
+
+      if [ "${SUDO_USER:-}" != "kiosk" ]; then
+          echo "This command is available only from the thin-client session."
+          exit 1
+      fi
+
+      if [ ! -f "$MARKER" ]; then
+          echo "Administrator Mode is not enabled."
+          exit 1
+      fi
+
+      if [ "$(stat -c %U "$MARKER" 2>/dev/null)" != "kiosk" ]; then
+          echo "Invalid Administrator Mode state."
+          exit 1
+      fi
+
+      case "${1:-}" in
+          terminal)
+              exec /usr/sbin/runuser --login vdi
+              ;;
+
+          netstats)
+              clear
+              echo "Network Statistics"
+              echo "=================="
+              echo
+              ip -br address
+              echo
+              echo "Routes"
+              echo "------"
+              ip route
+              echo
+              echo "Interface Statistics"
+              echo "--------------------"
+              ip -s link
+              echo
+              echo "Socket Summary"
+              echo "--------------"
+              ss -s
+              echo
+              read -rp "Press Enter to close..."
+              ;;
+
+          updates)
+              clear
+              echo "Available Updates"
+              echo "================="
+              echo
+              apt list --upgradable 2>/dev/null
+              echo
+              read -rp "Press Enter to close..."
+              ;;
+
+          editor)
+              exec /usr/sbin/runuser -u vdi -- nano
+              ;;
+
+          taskmgr)
+              exec top
+              ;;
+
+          logs)
+              journalctl -b -n 250 --no-pager
+              echo
+              read -rp "Press Enter to close..."
+              ;;
+
+          *)
+              echo "Unsupported administrator tool."
+              exit 2
+              ;;
+      esac
+      EOF
+      chmod 755 /usr/local/sbin/thinclient-admin-tool
+
+      cat > /etc/sudoers.d/thinclient-admin-auth <<'EOF'
+      kiosk ALL=(root) NOPASSWD: /usr/bin/pamtester login vdi authenticate
+
+      Cmnd_Alias THINCLIENT_ADMIN_TOOLS = \
+      /usr/local/sbin/thinclient-admin-tool terminal, \
+      /usr/local/sbin/thinclient-admin-tool netstats, \
+      /usr/local/sbin/thinclient-admin-tool updates, \
+      /usr/local/sbin/thinclient-admin-tool editor, \
+      /usr/local/sbin/thinclient-admin-tool taskmgr, \
+      /usr/local/sbin/thinclient-admin-tool logs
+
+      kiosk ALL=(root) NOPASSWD: THINCLIENT_ADMIN_TOOLS
+      EOF
+      chmod 440 /etc/sudoers.d/thinclient-admin-auth
+      visudo -cf /etc/sudoers.d/thinclient-admin-auth
+
+      cat > /usr/local/bin/thinclient-power <<'PY'
+      #!/usr/bin/python3
+      import gi
+      import subprocess
+      import sys
+
+      gi.require_version("Gtk", "3.0")
+      from gi.repository import Gtk
+
+      if len(sys.argv) != 2 or sys.argv[1] not in ("reboot", "poweroff"):
+          raise SystemExit(1)
+
+      action = sys.argv[1]
+      verb = "restart" if action == "reboot" else "shut down"
+
+      dialog = Gtk.MessageDialog(
+          modal=True,
+          message_type=Gtk.MessageType.QUESTION,
+          buttons=Gtk.ButtonsType.YES_NO,
+          text=f"Are you sure you want to {verb} this thin client?"
+      )
+
+      response = dialog.run()
+      dialog.destroy()
+
+      if response == Gtk.ResponseType.YES:
+          subprocess.Popen(["systemctl", action])
+      PY
+      chmod 755 /usr/local/bin/thinclient-power
+
+      # Custom appliance shell. The Start menu intentionally has no Search bar.
+      cat > /usr/local/bin/thinclient-shell <<'PY'
+      #!/usr/bin/python3
+
+      import gi
+      import os
+      import shlex
+      import subprocess
+      from datetime import datetime
+
+      gi.require_version("Gtk", "3.0")
+      gi.require_version("Gdk", "3.0")
+      from gi.repository import Gtk, Gdk, GLib
+
+
+      PANEL_HEIGHT = 52
+      MENU_WIDTH = 350
+
+      ADMIN_MARKERS = [
+          os.path.expanduser("~/.cache/thinclient/admin-mode"),
+          f"/run/user/{os.getuid()}/thinclient-admin-mode",
+      ]
+
+
+      def command(args):
+          try:
+              return subprocess.check_output(
+                  args,
+                  text=True,
+                  stderr=subprocess.DEVNULL
+              ).strip()
+          except Exception:
+              return ""
+
+
+      def spawn(command_line):
+          try:
+              subprocess.Popen(
+                  shlex.split(command_line),
+                  start_new_session=True
+              )
+          except Exception:
+              pass
+
+
+      def admin_enabled():
+          return any(os.path.exists(path) for path in ADMIN_MARKERS)
+
+
+      class VDIShell:
+
+          def __init__(self):
+              self.tools_submenu = None
+              self.power_submenu = None
+
+              self.apply_css()
+              self.create_panel()
+              self.create_start_menu()
+
+              GLib.timeout_add_seconds(
+                  1,
+                  self.update_clock
+              )
+
+              self.update_clock()
+
+          def apply_css(self):
+              css = b"""
+              #VDIPanel {
+                  background-color: #f4f4f4;
+                  border-top: 1px solid #c8c8c8;
+              }
+
+              #StartButton {
+                  background-image: none;
+                  background-color: #eeeeee;
+                  border: none;
+                  border-radius: 0;
+                  box-shadow: none;
+                  color: #1688ad;
+              }
+
+              #StartButton:hover {
+                  background-color: #dedede;
+              }
+
+              #StatusButton {
+                  background-image: none;
+                  background-color: transparent;
+                  border: none;
+                  border-radius: 4px;
+                  box-shadow: none;
+                  color: #1688ad;
+                  padding: 0 9px;
+              }
+
+              #StatusButton:hover,
+              #StatusButton:checked {
+                  background-color: #e0edf2;
+              }
+
+              #ClockButton {
+                  background-image: none;
+                  background-color: transparent;
+                  border: none;
+                  border-radius: 4px;
+                  box-shadow: none;
+                  padding: 2px 10px;
+                  color: #24596a;
+              }
+
+              #ClockTime {
+                  font-weight: bold;
+                  font-size: 14px;
+              }
+
+              #ClockDate {
+                  font-size: 11px;
+                  color: #54727d;
+              }
+
+              #StartMenu {
+                  background-color: #ffffff;
+                  border: 1px solid #aeb4b8;
+              }
+
+              #MenuRow {
+                  background-image: none;
+                  background-color: transparent;
+                  border: none;
+                  border-radius: 0;
+                  box-shadow: none;
+                  padding: 7px 13px;
+              }
+
+              #MenuRow:hover {
+                  background-color: #e5f1f6;
+              }
+
+              #MenuLabel {
+                  color: #30363a;
+                  font-size: 14px;
+              }
+
+              #MenuIcon {
+                  color: #1688ad;
+              }
+
+              #MenuSeparator {
+                  background-color: #777777;
+                  min-height: 1px;
+                  margin: 2px 0;
+              }
+
+              menu {
+                  background-color: #ffffff;
+                  border: 1px solid #aeb4b8;
+                  padding: 2px 0;
+              }
+
+              menu menuitem {
+                  min-height: 34px;
+                  padding: 3px 13px;
+                  color: #30363a;
+                  font-size: 13px;
+              }
+
+              menu menuitem:hover {
+                  background-color: #e5f1f6;
+              }
+
+              popover {
+                  background-color: #ffffff;
+                  border: 1px solid #b7bdc2;
+                  border-radius: 8px;
+                  padding: 8px;
+              }
+
+              scale trough {
+                  min-height: 5px;
+                  background-color: #d6dce0;
+                  border-radius: 4px;
+              }
+
+              scale highlight {
+                  background-color: #1688ad;
+                  border-radius: 4px;
+              }
+
+              scale slider {
+                  min-width: 16px;
+                  min-height: 16px;
+                  background-color: white;
+                  border: 1px solid #aeb5ba;
+                  border-radius: 9px;
+              }
+              """
+
+              provider = Gtk.CssProvider()
+              provider.load_from_data(css)
+
+              Gtk.StyleContext.add_provider_for_screen(
+                  Gdk.Screen.get_default(),
+                  provider,
+                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+              )
+
+          def create_panel(self):
+              self.panel = Gtk.Window(
+                  type=Gtk.WindowType.TOPLEVEL
+              )
+
+              self.panel.set_name("VDIPanel")
+              self.panel.set_decorated(False)
+              self.panel.set_resizable(False)
+              self.panel.set_keep_above(True)
+              self.panel.set_skip_taskbar_hint(True)
+              self.panel.set_skip_pager_hint(True)
+              self.panel.set_type_hint(
+                  Gdk.WindowTypeHint.DOCK
+              )
+              self.panel.set_accept_focus(False)
+
+              root = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=0
+              )
+
+              self.panel.add(root)
+
+              self.start_button = Gtk.Button()
+              self.start_button.set_name("StartButton")
+              self.start_button.set_relief(
+                  Gtk.ReliefStyle.NONE
+              )
+              self.start_button.set_size_request(
+                  62,
+                  PANEL_HEIGHT
+              )
+
+              start_icon = Gtk.Image.new_from_icon_name(
+                  "view-list-symbolic",
+                  Gtk.IconSize.LARGE_TOOLBAR
+              )
+              start_icon.set_pixel_size(28)
+
+              self.start_button.add(start_icon)
+
+              self.start_button.connect(
+                  "clicked",
+                  self.toggle_start_menu
+              )
+
+              root.pack_start(
+                  self.start_button,
+                  False,
+                  False,
+                  0
+              )
+
+              self.tasks = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=2
+              )
+
+              root.pack_start(
+                  self.tasks,
+                  True,
+                  True,
+                  8
+              )
+
+              status = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=0
+              )
+
+              root.pack_end(
+                  status,
+                  False,
+                  False,
+                  3
+              )
+
+              self.keyboard_button = self.status_button(
+                  "input-keyboard-symbolic",
+                  self.show_keyboard,
+                  "Keyboard"
+              )
+
+              self.network_button = self.status_button(
+                  "network-wired-symbolic",
+                  self.show_network,
+                  "Network"
+              )
+
+              self.volume_button = self.status_button(
+                  "audio-volume-high-symbolic",
+                  self.show_volume,
+                  "Volume"
+              )
+
+              status.pack_start(
+                  self.keyboard_button,
+                  False,
+                  False,
+                  0
+              )
+
+              status.pack_start(
+                  self.network_button,
+                  False,
+                  False,
+                  0
+              )
+
+              status.pack_start(
+                  self.volume_button,
+                  False,
+                  False,
+                  0
+              )
+
+              self.clock_button = Gtk.Button()
+              self.clock_button.set_name("ClockButton")
+              self.clock_button.set_relief(
+                  Gtk.ReliefStyle.NONE
+              )
+
+              self.clock_button.connect(
+                  "clicked",
+                  self.show_calendar
+              )
+
+              clock_box = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL,
+                  spacing=0
+              )
+
+              self.clock_time = Gtk.Label()
+              self.clock_time.set_name("ClockTime")
+
+              self.clock_date = Gtk.Label()
+              self.clock_date.set_name("ClockDate")
+
+              clock_box.pack_start(
+                  self.clock_time,
+                  True,
+                  True,
+                  0
+              )
+
+              clock_box.pack_start(
+                  self.clock_date,
+                  True,
+                  True,
+                  0
+              )
+
+              self.clock_button.add(clock_box)
+
+              status.pack_start(
+                  self.clock_button,
+                  False,
+                  False,
+                  0
+              )
+
+              self.position_panel()
+              self.panel.show_all()
+
+          def status_button(
+              self,
+              icon_name,
+              callback,
+              tooltip
+          ):
+              button = Gtk.Button()
+              button.set_name("StatusButton")
+              button.set_relief(
+                  Gtk.ReliefStyle.NONE
+              )
+              button.set_tooltip_text(tooltip)
+              button.set_size_request(
+                  44,
+                  PANEL_HEIGHT
+              )
+
+              image = Gtk.Image.new_from_icon_name(
+                  icon_name,
+                  Gtk.IconSize.LARGE_TOOLBAR
+              )
+              image.set_pixel_size(23)
+
+              button.add(image)
+              button.connect("clicked", callback)
+
+              return button
+
+          def position_panel(self):
+              display = Gdk.Display.get_default()
+              monitor = (
+                  display.get_primary_monitor()
+                  if display
+                  else None
+              )
+
+              if (
+                  monitor is None
+                  and display is not None
+                  and display.get_n_monitors() > 0
+              ):
+                  monitor = display.get_monitor(0)
+
+              if monitor is not None:
+                  geometry = monitor.get_geometry()
+
+                  self.panel.move(
+                      geometry.x,
+                      geometry.y
+                      + geometry.height
+                      - PANEL_HEIGHT
+                  )
+
+                  self.panel.set_size_request(
+                      geometry.width,
+                      PANEL_HEIGHT
+                  )
+
+              else:
+                  screen = Gdk.Screen.get_default()
+
+                  self.panel.move(
+                      0,
+                      screen.get_height()
+                      - PANEL_HEIGHT
+                  )
+
+                  self.panel.set_size_request(
+                      screen.get_width(),
+                      PANEL_HEIGHT
+                  )
+
+          def create_start_menu(self):
+              self.start_menu = Gtk.Window(
+                  type=Gtk.WindowType.TOPLEVEL
+              )
+
+              self.start_menu.set_name("StartMenu")
+              self.start_menu.set_decorated(False)
+              self.start_menu.set_resizable(False)
+              self.start_menu.set_keep_above(True)
+              self.start_menu.set_skip_taskbar_hint(True)
+              self.start_menu.set_skip_pager_hint(True)
+
+              self.start_menu.set_default_size(
+                  MENU_WIDTH,
+                  -1
+              )
+
+              root = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL,
+                  spacing=0
+              )
+
+              self.start_menu.add(root)
+
+              self.menu_items_box = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL,
+                  spacing=0
+              )
+
+              root.pack_start(
+                  self.menu_items_box,
+                  True,
+                  True,
+                  0
+              )
+
+              self.add_menu_item(
+                  "Citrix Workspace",
+                  "citrix-receiver",
+                  "/usr/local/bin/thinclient-citrix"
+              )
+
+              self.add_menu_item(
+                  "Remote Desktop",
+                  "computer-symbolic",
+                  "/usr/local/bin/thinclient-rdp"
+              )
+
+              self.add_menu_item(
+                  "Omnissa Horizon",
+                  "video-display-symbolic",
+                  "/usr/local/bin/thinclient-horizon"
+              )
+
+              self.separator()
+
+              admin_label = (
+                  "Switch to User"
+                  if admin_enabled()
+                  else "Switch to Administrator"
+              )
+
+              admin_command = (
+                  "/usr/local/bin/thinclient-exit-admin"
+                  if admin_enabled()
+                  else "/usr/local/bin/thinclient-admin-mode"
+              )
+
+              self.add_menu_item(
+                  admin_label,
+                  (
+                      "system-log-out-symbolic"
+                      if admin_enabled()
+                      else "changes-prevent-symbolic"
+                  ),
+                  admin_command
+              )
+
+              self.add_menu_item(
+                  "System Information",
+                  "dialog-information-symbolic",
+                  "/usr/local/bin/thinclient-system-info"
+              )
+
+              self.add_menu_item(
+                  "Control Panel",
+                  "preferences-system-symbolic",
+                  "/usr/local/bin/thinclient-control-panel"
+              )
+
+              if admin_enabled():
+                  self.add_tools_item()
+
+              self.add_power_item()
+
+          def add_menu_item(
+              self,
+              label,
+              icon,
+              command_line
+          ):
+              row = Gtk.Button()
+              row.set_name("MenuRow")
+              row.set_relief(Gtk.ReliefStyle.NONE)
+
+              box = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=12
+              )
+
+              image = Gtk.Image.new_from_icon_name(
+                  icon,
+                  Gtk.IconSize.LARGE_TOOLBAR
+              )
+
+              image.set_name("MenuIcon")
+              image.set_pixel_size(22)
+
+              text = Gtk.Label(label=label)
+              text.set_name("MenuLabel")
+              text.set_xalign(0)
+
+              box.pack_start(
+                  image,
+                  False,
+                  False,
+                  0
+              )
+
+              box.pack_start(
+                  text,
+                  True,
+                  True,
+                  0
+              )
+
+              row.add(box)
+
+              row.connect(
+                  "clicked",
+                  lambda *_: self.launch_and_hide(
+                      command_line
+                  )
+              )
+
+              self.menu_items_box.pack_start(
+                  row,
+                  False,
+                  False,
+                  0
+              )
+
+          def add_tools_item(self):
+              row = Gtk.Button()
+              row.set_name("MenuRow")
+              row.set_relief(Gtk.ReliefStyle.NONE)
+
+              box = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=12
+              )
+
+              image = Gtk.Image.new_from_icon_name(
+                  "applications-utilities-symbolic",
+                  Gtk.IconSize.LARGE_TOOLBAR
+              )
+              image.set_name("MenuIcon")
+              image.set_pixel_size(22)
+
+              text = Gtk.Label(label="Tools")
+              text.set_name("MenuLabel")
+              text.set_xalign(0)
+
+              arrow = Gtk.Image.new_from_icon_name(
+                  "go-next-symbolic",
+                  Gtk.IconSize.MENU
+              )
+
+              box.pack_start(
+                  image,
+                  False,
+                  False,
+                  0
+              )
+              box.pack_start(
+                  text,
+                  True,
+                  True,
+                  0
+              )
+              box.pack_end(
+                  arrow,
+                  False,
+                  False,
+                  0
+              )
+
+              row.add(box)
+
+              row.connect(
+                  "clicked",
+                  self.open_tools_submenu
+              )
+
+              self.menu_items_box.pack_start(
+                  row,
+                  False,
+                  False,
+                  0
+              )
+
+          def open_tools_submenu(
+              self,
+              row,
+              *_
+          ):
+              if not admin_enabled():
+                  return
+
+              menu = Gtk.Menu()
+              self.tools_submenu = menu
+
+              entries = [
+                  (
+                      "X Terminal",
+                      "utilities-terminal-symbolic",
+                      "terminal",
+                      "Administrator Terminal"
+                  ),
+                  (
+                      "Network Statistics",
+                      "network-wired-symbolic",
+                      "netstats",
+                      "Network Statistics"
+                  ),
+                  (
+                      "Check for Updates",
+                      "software-update-available-symbolic",
+                      "updates",
+                      "Check for Updates"
+                  ),
+                  (
+                      "Text Editor",
+                      "accessories-text-editor-symbolic",
+                      "editor",
+                      "Text Editor"
+                  ),
+                  (
+                      "Task Manager",
+                      "utilities-system-monitor-symbolic",
+                      "taskmgr",
+                      "Task Manager"
+                  ),
+                  (
+                      "System Logs",
+                      "text-x-generic-symbolic",
+                      "logs",
+                      "System Logs"
+                  ),
+                  (
+                      "File Manager",
+                      "system-file-manager-symbolic",
+                      "filemanager",
+                      "File Manager"
+                  ),
+                  (
+                      "Screenshot Tool",
+                      "applets-screenshooter-symbolic",
+                      "screenshot",
+                      "Screenshot Tool"
+                  ),
+              ]
+
+              for label, icon_name, action, title in entries:
+                  item = Gtk.ImageMenuItem.new_with_label(
+                      label
+                  )
+
+                  icon = Gtk.Image.new_from_icon_name(
+                      icon_name,
+                      Gtk.IconSize.MENU
+                  )
+
+                  item.set_image(icon)
+                  item.set_always_show_image(True)
+
+                  item.connect(
+                      "activate",
+                      self.launch_admin_tool,
+                      action,
+                      title
+                  )
+
+                  menu.append(item)
+
+              menu.show_all()
+
+              menu.popup_at_widget(
+                  row,
+                  Gdk.Gravity.NORTH_EAST,
+                  Gdk.Gravity.NORTH_WEST,
+                  None
+              )
+
+          def launch_admin_tool(
+              self,
+              _item,
+              action,
+              title
+          ):
+              try:
+                  self.tools_submenu.popdown()
+              except Exception:
+                  pass
+
+              self.start_menu.hide()
+
+              # Administrator tools are real graphical applications.
+              # Only the terminal uses the privileged helper to enter the vdi
+              # administrator shell without asking for a second password.
+              commands = {
+                  "terminal": [
+                      "gnome-terminal",
+                      "--",
+                      "/bin/bash",
+                      "-lc",
+                      (
+                          "exec sudo -n "
+                          "/usr/local/sbin/"
+                          "thinclient-admin-tool terminal"
+                      )
+                  ],
+                  "netstats": [
+                      "gnome-system-monitor",
+                      "--show-resources-tab"
+                  ],
+                  "updates": [
+                      "update-manager"
+                  ],
+                  "editor": [
+                      "gnome-text-editor"
+                  ],
+                  "taskmgr": [
+                      "gnome-system-monitor",
+                      "--show-processes-tab"
+                  ],
+                  "logs": [
+                      "gnome-logs"
+                  ],
+                  "filemanager": [
+                      "nemo"
+                  ],
+                  "screenshot": [
+                      "gnome-screenshot",
+                      "-i"
+                  ],
+              }
+
+              argv = commands.get(action)
+              if not argv:
+                  return
+
+              subprocess.Popen(
+                  argv,
+                  start_new_session=True
+              )
+
+          def add_power_item(self):
+              row = Gtk.Button()
+              row.set_name("MenuRow")
+              row.set_relief(Gtk.ReliefStyle.NONE)
+
+              box = Gtk.Box(
+                  orientation=Gtk.Orientation.HORIZONTAL,
+                  spacing=12
+              )
+
+              image = Gtk.Image.new_from_icon_name(
+                  "system-shutdown-symbolic",
+                  Gtk.IconSize.LARGE_TOOLBAR
+              )
+
+              image.set_name("MenuIcon")
+              image.set_pixel_size(22)
+
+              text = Gtk.Label(label="Power")
+              text.set_name("MenuLabel")
+              text.set_xalign(0)
+
+              arrow = Gtk.Image.new_from_icon_name(
+                  "go-next-symbolic",
+                  Gtk.IconSize.MENU
+              )
+
+              box.pack_start(
+                  image,
+                  False,
+                  False,
+                  0
+              )
+
+              box.pack_start(
+                  text,
+                  True,
+                  True,
+                  0
+              )
+
+              box.pack_end(
+                  arrow,
+                  False,
+                  False,
+                  0
+              )
+
+              row.add(box)
+
+              row.connect(
+                  "clicked",
+                  self.open_power_submenu
+              )
+
+              self.menu_items_box.pack_start(
+                  row,
+                  False,
+                  False,
+                  0
+              )
+
+          def open_power_submenu(
+              self,
+              row,
+              *_
+          ):
+              menu = Gtk.Menu()
+              self.power_submenu = menu
+
+              for label, command_line in [
+                  (
+                      "Restart",
+                      "/usr/local/bin/thinclient-power reboot"
+                  ),
+                  (
+                      "Shut Down",
+                      "/usr/local/bin/thinclient-power poweroff"
+                  ),
+              ]:
+                  item = Gtk.MenuItem(label=label)
+
+                  item.connect(
+                      "activate",
+                      lambda _item, c=command_line:
+                          self.launch_and_hide(c)
+                  )
+
+                  menu.append(item)
+
+              menu.show_all()
+
+              menu.popup_at_widget(
+                  row,
+                  Gdk.Gravity.NORTH_EAST,
+                  Gdk.Gravity.NORTH_WEST,
+                  None
+              )
+
+          def separator(self):
+              sep = Gtk.Separator()
+              sep.set_name("MenuSeparator")
+
+              self.menu_items_box.pack_start(
+                  sep,
+                  False,
+                  False,
+                  0
+              )
+
+          def toggle_start_menu(self, *_):
+              if self.start_menu.get_visible():
+                  self.start_menu.hide()
+                  return
+
+              self.start_menu.destroy()
+              self.create_start_menu()
+
+              screen = Gdk.Screen.get_default()
+
+              self.start_menu.show_all()
+
+              _minimum, natural = (
+                  self.start_menu.get_preferred_size()
+              )
+
+              self.start_menu.move(
+                  0,
+                  screen.get_height()
+                  - PANEL_HEIGHT
+                  - natural.height
+              )
+
+          def launch_and_hide(
+              self,
+              command_line
+          ):
+              self.start_menu.hide()
+              spawn(command_line)
+
+          def show_network(
+              self,
+              button
+          ):
+              popover = Gtk.Popover.new(button)
+
+              box = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL,
+                  spacing=8
+              )
+              box.set_border_width(14)
+
+              title = Gtk.Label()
+              title.set_markup("<b>Network</b>")
+              title.set_xalign(0)
+
+              route = command(
+                  ["ip", "route", "show", "default"]
+              )
+
+              interface = ""
+              gateway = ""
+
+              if route:
+                  pieces = route.split()
+
+                  if "dev" in pieces:
+                      interface = pieces[
+                          pieces.index("dev") + 1
+                      ]
+
+                  if "via" in pieces:
+                      gateway = pieces[
+                          pieces.index("via") + 1
+                      ]
+
+              address = ""
+
+              if interface:
+                  raw = command([
+                      "ip",
+                      "-4",
+                      "-o",
+                      "addr",
+                      "show",
+                      "dev",
+                      interface
+                  ])
+
+                  fields = raw.split()
+
+                  if "inet" in fields:
+                      address = fields[
+                          fields.index("inet") + 1
+                      ].split("/")[0]
+
+              status = Gtk.Label(
+                  label=(
+                      "Connected"
+                      if address
+                      else "Disconnected"
+                  )
+              )
+              status.set_xalign(0)
+
+              detail = Gtk.Label(
+                  label=(
+                      f"Ethernet · {interface}\n"
+                      f"{address}"
+                      if address
+                      else "No active connection"
+                  )
+              )
+              detail.set_xalign(0)
+
+              box.pack_start(
+                  title,
+                  False,
+                  False,
+                  0
+              )
+              box.pack_start(
+                  status,
+                  False,
+                  False,
+                  0
+              )
+              box.pack_start(
+                  detail,
+                  False,
+                  False,
+                  0
+              )
+
+              popover.add(box)
+              popover.show_all()
+              popover.popup()
+
+          def show_volume(
+              self,
+              button
+          ):
+              popover = Gtk.Popover.new(button)
+
+              box = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL,
+                  spacing=10
+              )
+              box.set_border_width(14)
+
+              title = Gtk.Label()
+              title.set_markup("<b>Sound</b>")
+              title.set_xalign(0)
+
+              scale = Gtk.Scale.new_with_range(
+                  Gtk.Orientation.HORIZONTAL,
+                  0,
+                  100,
+                  1
+              )
+
+              raw = command([
+                  "pactl",
+                  "get-sink-volume",
+                  "@DEFAULT_SINK@"
+              ])
+
+              volume = 50
+
+              for token in raw.split():
+                  if token.endswith("%"):
+                      try:
+                          volume = int(token[:-1])
+                          break
+                      except ValueError:
+                          pass
+
+              scale.set_value(volume)
+              scale.set_size_request(210, -1)
+
+              value_label = Gtk.Label(
+                  label=f"{volume}%"
+              )
+              value_label.set_xalign(0)
+
+              def volume_changed(widget):
+                  value = int(widget.get_value())
+                  value_label.set_text(f"{value}%")
+
+                  subprocess.Popen([
+                      "pactl",
+                      "set-sink-volume",
+                      "@DEFAULT_SINK@",
+                      f"{value}%"
+                  ])
+
+              scale.connect(
+                  "value-changed",
+                  volume_changed
+              )
+
+              box.pack_start(
+                  title,
+                  False,
+                  False,
+                  0
+              )
+              box.pack_start(
+                  scale,
+                  False,
+                  False,
+                  0
+              )
+              box.pack_start(
+                  value_label,
+                  False,
+                  False,
+                  0
+              )
+
+              popover.add(box)
+              popover.show_all()
+              popover.popup()
+
+          def show_keyboard(
+              self,
+              button
+          ):
+              popover = Gtk.Popover.new(button)
+
+              box = Gtk.Box(
+                  orientation=Gtk.Orientation.VERTICAL,
+                  spacing=7
+              )
+              box.set_border_width(14)
+
+              title = Gtk.Label()
+              title.set_markup("<b>Keyboard</b>")
+              title.set_xalign(0)
+
+              language = Gtk.Label(
+                  label="English (US)"
+              )
+              language.set_xalign(0)
+
+              layout = Gtk.Label(
+                  label="Layout · US"
+              )
+              layout.set_xalign(0)
+
+              box.pack_start(
+                  title,
+                  False,
+                  False,
+                  0
+              )
+              box.pack_start(
+                  language,
+                  False,
+                  False,
+                  0
+              )
+              box.pack_start(
+                  layout,
+                  False,
+                  False,
+                  0
+              )
+
+              popover.add(box)
+              popover.show_all()
+              popover.popup()
+
+          def update_clock(self):
+              now = datetime.now()
+
+              self.clock_time.set_text(
+                  now.strftime("%H:%M")
+              )
+
+              self.clock_date.set_text(
+                  now.strftime("%d/%m/%Y")
+              )
+
+              return True
+
+          def show_calendar(
+              self,
+              button
+          ):
+              popover = Gtk.Popover.new(button)
+
+              calendar = Gtk.Calendar()
+              calendar.set_border_width(8)
+
+              popover.add(calendar)
+              popover.show_all()
+              popover.popup()
+
+
+      VDIShell()
+      Gtk.main()
+      PY
+      chmod 755 /usr/local/bin/thinclient-shell
+
+      cat > /usr/local/bin/thinclient-panel <<'EOF'
+      #!/bin/bash
+      set -u
+
+      exec /usr/local/bin/thinclient-shell
+      EOF
+      chmod 755 /usr/local/bin/thinclient-panel
+
+      # Horizon installer retained from the earlier image, now as a helper.
+      cat > /usr/local/sbin/install-horizon-client <<'EOF'
+      #!/bin/bash
+      set -u
+      URL='https://hasanaltin.com/Omnissa-Horizon-Client-2606-8.19.0-32216036411.x64.deb'
+      DEB='/var/cache/omnissa-horizon-client.deb'
+      [ -x /usr/bin/horizon-client ] && exit 0
+      mkdir -p /var/cache
+      for attempt in $(seq 1 3); do
+          rm -f "$DEB"
+          if curl -fL --connect-timeout 20 --max-time 300 -o "$DEB" "$URL"; then
+              dpkg -i "$DEB" || true
+              apt-get -f install -y || true
+              dpkg --configure -a || true
+              [ -x /usr/bin/horizon-client ] && exit 0
+          fi
+          sleep 10
+      done
+      exit 1
+      EOF
+      chmod 755 /usr/local/sbin/install-horizon-client
+      
+      # Permissions after all files are in place.
+      chown -R kiosk:kiosk /home/kiosk
+      chmod 700 /home/kiosk/.config/thinclient /home/kiosk/.cache/thinclient || true
+      
+      
+      # Remove obsolete Nemo action/layout files from earlier development iterations.
+      rm -f \
+          /home/kiosk/.local/share/nemo/actions/10-citrix.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/20-rdp.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/30-omnissa-horizon.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/31-arrange-name.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/32-arrange-type.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/33-arrange-size.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/34-arrange-date.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/60-rdp-start.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/61-rdp-edit.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/62-rdp-copy.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/63-rdp-rename.nemo_action \
+          /home/kiosk/.local/share/nemo/actions/64-rdp-delete.nemo_action \
+          /home/kiosk/.config/nemo/actions/actions-tree.json
+      
+      # Validate the entire appliance before switching away from Ubuntu's
+      # recovery display manager. A failure here leaves the normal graphical
+      # administrator login available instead of a black screen or tty-only boot.
+      REQUIRED=(
+          /usr/bin/Xorg
+          /usr/sbin/lightdm
+          /usr/bin/openbox
+          /usr/bin/nemo-desktop
+          /usr/local/bin/thinclient-session
+          /usr/local/bin/thinclient-panel
+          /usr/local/bin/thinclient-shell
+          /usr/local/bin/thinclient-admin-mode
+          /usr/local/sbin/thinclient-admin-tool
+          /usr/local/bin/thinclient-rdp
+          /usr/share/xsessions/thinclient-openbox.desktop
+          /usr/local/share/thinclient/nemo-overlay/nemo-directory-view-ui.xml
+      )
+      for item in "${REQUIRED[@]}"; do
+          if [ ! -e "$item" ]; then
+              echo "Validation failed: missing $item" >&2
+              exit 40
+          fi
+      done
+      command -v xfreerdp3 >/dev/null 2>&1 || { echo 'Validation failed: xfreerdp3 missing' >&2; exit 41; }
+      python3 -m py_compile \
+          /usr/local/bin/thinclient-shell \
+          /usr/local/bin/thinclient-admin-mode \
+          /usr/local/bin/thinclient-power \
+          /usr/local/bin/thinclient-rdp \
+          /usr/local/bin/thinclient-rdp-profile \
+          /usr/local/bin/thinclient-rdp-shortcut \
+          /usr/local/bin/thinclient-system-info \
+          /usr/local/bin/thinclient-control-panel \
+          /home/kiosk/.local/share/nemo-python/extensions/thinclient_connections.py
+      bash -n /usr/local/bin/thinclient-session
+      bash -n /usr/local/bin/thinclient-panel
+      bash -n /usr/local/bin/thinclient-exit-admin
+      bash -n /usr/local/bin/thinclient-admin-terminal
+      bash -n /usr/local/sbin/thinclient-admin-tool
+      visudo -cf /etc/sudoers.d/thinclient-admin-auth
+
+      # Horizon is a core client for this appliance. If installation fails,
+      # retain the Ubuntu recovery desktop and retry provisioning on next boot.
+      if ! /usr/local/sbin/install-horizon-client; then
+          echo 'Validation failed: Omnissa Horizon Client could not be installed.' >&2
+          exit 42
+      fi
+
+      # Permissions after final validation.
+      chown -R kiosk:kiosk /home/kiosk
+      chmod 700 /home/kiosk/.config/thinclient /home/kiosk/.cache/thinclient || true
+
+      # Atomically make LightDM the production display manager only now.
+      systemctl disable gdm3.service 2>/dev/null || true
+      ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
+      printf '%s\n' '/usr/sbin/lightdm' > /etc/X11/default-display-manager
+      systemctl enable lightdm.service
+      systemctl enable ssh.service || true
+      systemctl set-default graphical.target
+
+      # Prevent Ctrl+Alt+Delete reboot from bypassing the controlled power menu.
+      systemctl mask ctrl-alt-del.target || true
+
+      rm -f "$FAILED"
+      touch "$MARKER"
+      sync
+
+      # A clean reboot avoids changing display-manager implementations in the
+      # middle of the first boot. The next boot goes straight to kiosk LightDM.
+      systemctl --no-block reboot || true
+      THINCLIENT_FIRSTBOOT
+      chmod 755 /target/usr/local/sbin/thinclient-firstboot
+
+    # Provision before the graphical display manager starts. Failure falls back to Ubuntu recovery GUI.
+    - |
+      cat > /target/etc/systemd/system/thinclient-firstboot.service <<'EOF'
+      [Unit]
+      Description=Provision Thin Client Appliance
+      Wants=network-online.target
+      After=network-online.target
+      Before=display-manager.service graphical.target
+      ConditionPathExists=!/var/lib/thinclient/configured
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/thinclient-firstboot
+      RemainAfterExit=no
+      TimeoutStartSec=20min
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      chroot /target systemctl enable thinclient-firstboot.service
+
+    # Keep Ctrl+Alt+Delete from bypassing the controlled power menu.
+    - |
+      chroot /target systemctl mask ctrl-alt-del.target || true
+
+  shutdown: reboot
