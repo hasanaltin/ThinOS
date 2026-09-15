@@ -4012,61 +4012,27 @@ autoinstall:
               self.start_menu.popdown()
               spawn(command_line)
 
-          def new_status_window(self):
-              # A plain always-on-top window, styled to look like a popover,
-              # instead of an actual Gtk.Popover. Popovers are override-
-              # redirect windows the window manager doesn't manage, and they
-              # were losing the stacking fight against this panel's own
-              # keep_above DOCK window - reported as showing up behind other
-              # windows. A window that sets keep_above itself (like the Start
-              # Menu, which never had this problem) stays on top reliably.
-              win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
-              win.set_name("StatusPopup")
-              win.set_decorated(False)
-              win.set_resizable(False)
-              win.set_keep_above(True)
-              win.set_skip_taskbar_hint(True)
-              win.set_skip_pager_hint(True)
-              win.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+          def new_status_window(self, button):
+              # A real Gtk.Popover, not a plain Gtk.Window. The same lesson
+              # from the Start Menu applies here: a custom keep_above window
+              # dismissed via focus-out-event turned out unreliable in this
+              # environment (it could fail to fire at all for a genuine
+              # outside click, leaving the popup stuck open). Popover has
+              # its own well-tested grab that dismisses on an actual outside
+              # click, the same class of mechanism Gtk.Menu uses, without
+              # depending on window-manager focus events. It also isn't a
+              # separate top-level window Wnck's tasklist would ever see.
+              return Gtk.Popover.new(button)
 
-              win.focus_out_handler_id = win.connect(
-                  "focus-out-event", self.on_status_popup_focus_out
-              )
-
-              return win
-
-          def on_status_popup_focus_out(self, win, _event):
-              # Same reasoning as the Start Menu's guard: present() can
-              # itself trigger a spurious focus-out right after the window
-              # is shown, which without this would close the popup before
-              # the user had any chance to interact with it.
-              shown_at = getattr(win, "shown_at", 0)
-              if GLib.get_monotonic_time() - shown_at < 400000:
-                  return False
-
-              win.destroy()
-              return False
-
-          def show_status_popup(self, win, button):
+          def show_status_popup(self, win, _button):
               win.show_all()
-
-              _minimum, natural = win.get_preferred_size()
-              button_x, _button_y = button.translate_coordinates(self.panel, 0, 0)
-              button_width = button.get_allocated_width()
-
-              x = self.panel_x + button_x + button_width - natural.width
-              x = max(self.panel_x, x)
-              y = self.panel_y - natural.height
-
-              win.move(x, y)
-              win.shown_at = GLib.get_monotonic_time()
-              win.present_with_time(Gtk.get_current_event_time())
+              win.popup()
 
           def show_network(
               self,
               button
           ):
-              win = self.new_status_window()
+              win = self.new_status_window(button)
 
               box = Gtk.Box(
                   orientation=Gtk.Orientation.VERTICAL,
@@ -4180,7 +4146,7 @@ autoinstall:
               settings_button.connect(
                   "clicked",
                   lambda *_: (
-                      win.destroy(),
+                      win.popdown(),
                       spawn("/usr/local/bin/thinclient-control-panel")
                   )
               )
@@ -4314,23 +4280,12 @@ autoinstall:
                       daemon=True
                   ).start()
 
-          def prompt_wifi_password(self, ssid, parent_win):
-              # parent_win auto-destroys itself on focus-out (see
-              # new_status_window) so it doesn't linger once you click away -
-              # but this dialog stealing its focus would trigger exactly
-              # that, destroying the popup this dialog is transient for
-              # while it's still open. Block that handler for as long as the
-              # dialog is up.
-              focus_out_handler_id = getattr(
-                  parent_win, "focus_out_handler_id", None
-              )
-
-              if focus_out_handler_id is not None:
-                  parent_win.handler_block(focus_out_handler_id)
-
+          def prompt_wifi_password(self, ssid, _parent_win):
+              # transient_for needs an actual Gtk.Window - the network
+              # popover isn't one, so anchor the dialog to the panel itself.
               dialog = Gtk.Dialog(
                   title="Wi-Fi Password",
-                  transient_for=parent_win,
+                  transient_for=self.panel,
                   modal=True
               )
 
@@ -4398,17 +4353,11 @@ autoinstall:
 
               dialog.destroy()
 
-              if focus_out_handler_id is not None:
-                  try:
-                      parent_win.handler_unblock(focus_out_handler_id)
-                  except Exception:
-                      pass
-
           def show_volume(
               self,
               button
           ):
-              win = self.new_status_window()
+              win = self.new_status_window(button)
 
               box = Gtk.Box(
                   orientation=Gtk.Orientation.VERTICAL,
@@ -4493,7 +4442,7 @@ autoinstall:
               self,
               button
           ):
-              win = self.new_status_window()
+              win = self.new_status_window(button)
 
               box = Gtk.Box(
                   orientation=Gtk.Orientation.VERTICAL,
@@ -4522,7 +4471,7 @@ autoinstall:
               settings_button.connect(
                   "clicked",
                   lambda *_: (
-                      win.destroy(),
+                      win.popdown(),
                       spawn("/usr/local/bin/thinclient-control-panel")
                   )
               )
@@ -4572,7 +4521,7 @@ autoinstall:
               self,
               button
           ):
-              win = self.new_status_window()
+              win = self.new_status_window(button)
 
               calendar = Gtk.Calendar()
               calendar.set_border_width(8)
