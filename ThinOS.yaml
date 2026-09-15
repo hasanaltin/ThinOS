@@ -345,13 +345,19 @@ autoinstall:
       export QT_SCALE_FACTOR=1
 
       # GTK4/libadwaita (Control Panel, System Information, Administrator
-      # Login) defaults to a GPU-accelerated renderer that expects a
-      # compositor for frame synchronization. Without one (see above),
-      # that showed up as visible flicker specific to these apps and to no
-      # GTK3 app - confirmed by reproducing it only with GTK4 windows open.
-      # Force GTK4's software (cairo) renderer instead: slower, but doesn't
-      # depend on GL sync a compositor-less X session can't provide.
+      # Login) windows only, never GTK3 ones - confirmed by reproducing it
+      # with just one such window open, launched either from the Start Menu
+      # or directly from a terminal. Forcing the cairo (software) renderer
+      # alone did not stop it.
       export GSK_RENDERER=cairo
+
+      # Captured with xev: the window cycles UnmapNotify -> MapNotify ->
+      # VisibilityNotify continuously, on its own, not tied to a click - a
+      # real re-map loop, not a paint artifact. That pattern matches GDK's
+      # frame clock retrying _NET_WM_SYNC_REQUEST when it never gets the
+      # acknowledgement a compositor would normally provide. Disabling
+      # vsync-based frame throttling removes that wait/retry entirely.
+      export GDK_DEBUG=no-vsync
 
       xset s off >/dev/null 2>&1 || true
       xset -dpms >/dev/null 2>&1 || true
