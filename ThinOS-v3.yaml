@@ -45,6 +45,10 @@ autoinstall:
     # this public repository.
     password: '$6$YX41O/3bwFChKwsF$ssfHanfJS/OtH39ILYK5HuiOQB2ZWm.bW3FCP.pjXVyUmdx2IGgX8TUv8LMAv1JTqjEah90GVwu96BloO8WsF0'
 
+  ssh:
+    install-server: true
+    allow-pw: true
+
   source:
     id: ubuntu-desktop-minimal
 
