@@ -5681,31 +5681,34 @@ autoinstall:
               # "cat >"/"cat >>" heredocs (see thinclient-firstboot's own
               # size comment) rather than one, so extraction has to follow
               # each one's own delimiter instead of a single fixed name.
-              python3 - "$WORKDIR/ThinOS-v2.yaml" > "$WORKDIR/provision.sh" <<'PY'
-              import re
-              import sys
+              # Note: this heredoc's body is fed to python3 on stdin, so
+              # (unlike the surrounding bash) its indentation is meaningful
+              # Python syntax, not cosmetic - it must start at column 0.
+      python3 - "$WORKDIR/ThinOS-v2.yaml" > "$WORKDIR/provision.sh" <<'PY'
+      import re
+      import sys
 
-              lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
-              opener_re = re.compile(
-                  r"^\s*cat (>>?) /target/usr/local/sbin/thinclient-firstboot <<-?'?(\w+)'?\s*$"
-              )
+      lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+      opener_re = re.compile(
+          r"^\s*cat (>>?) /target/usr/local/sbin/thinclient-firstboot <<-?'?(\w+)'?\s*$"
+      )
 
-              assembled = []
-              i = 0
-              while i < len(lines):
-                  m = opener_re.match(lines[i])
-                  if m:
-                      op, delim = m.group(1), m.group(2)
-                      j = i + 1
-                      while j < len(lines) and lines[j].strip() != delim:
-                          j += 1
-                      body = lines[i + 1:j]
-                      assembled = body if op == ">" else assembled + body
-                      i = j + 1
-                      continue
-                  i += 1
+      assembled = []
+      i = 0
+      while i < len(lines):
+          m = opener_re.match(lines[i])
+          if m:
+              op, delim = m.group(1), m.group(2)
+              j = i + 1
+              while j < len(lines) and lines[j].strip() != delim:
+                  j += 1
+              body = lines[i + 1:j]
+              assembled = body if op == ">" else assembled + body
+              i = j + 1
+              continue
+          i += 1
 
-              print("\n".join(l[6:] if l.startswith("      ") else l for l in assembled))
+      print("\n".join(l[6:] if l.startswith("      ") else l for l in assembled))
       PY
 
               if [ ! -s "$WORKDIR/provision.sh" ]; then
