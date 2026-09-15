@@ -1499,6 +1499,31 @@ autoinstall:
           row.add_prefix(image)
 
 
+      def new_page():
+          # A plain scrollable box instead of Adw.PreferencesPage: the
+          # latter clamps its content to a fixed readable width even in a
+          # maximized window, which looked like the page "not expanding" -
+          # reported as content staying stuck in the middle of the window.
+          # Adw.PreferencesGroup itself doesn't clamp, so it still gives the
+          # same grouped-rows look, just stretched to the window's width.
+          scroller = Gtk.ScrolledWindow()
+          scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+          content = Gtk.Box(
+              orientation=Gtk.Orientation.VERTICAL,
+              spacing=24
+          )
+
+          content.set_margin_start(24)
+          content.set_margin_end(24)
+          content.set_margin_top(24)
+          content.set_margin_bottom(24)
+          content.set_hexpand(True)
+
+          scroller.set_child(content)
+          return scroller, content
+
+
       class ControlCenter(Adw.Application):
 
           def __init__(self):
@@ -1574,6 +1599,27 @@ autoinstall:
                   close_button
               )
 
+              self.maximize_button = Gtk.Button(
+                  icon_name="window-maximize-symbolic"
+              )
+
+              self.maximize_button.set_tooltip_text("Maximize")
+              self.maximize_button.connect("clicked", self.toggle_maximize)
+              header.pack_end(self.maximize_button)
+
+              minimize_button = Gtk.Button(
+                  icon_name="window-minimize-symbolic"
+              )
+
+              minimize_button.set_tooltip_text("Minimize")
+
+              minimize_button.connect(
+                  "clicked",
+                  lambda *_: self.window.minimize()
+              )
+
+              header.pack_end(minimize_button)
+
               root.append(header)
 
               self.stack = Gtk.Stack()
@@ -1598,6 +1644,11 @@ autoinstall:
 
               self.window.set_content(root)
 
+              self.window.connect(
+                  "notify::maximized",
+                  self.on_maximized_changed
+              )
+
               self.show_page(
                   "overview",
                   "Control Center",
@@ -1605,6 +1656,25 @@ autoinstall:
               )
 
               self.window.present()
+
+          def toggle_maximize(self, _button):
+              if self.window.is_maximized():
+                  self.window.unmaximize()
+              else:
+                  self.window.maximize()
+
+          def on_maximized_changed(self, window, _pspec):
+              self.maximize_button.set_icon_name(
+                  "window-restore-symbolic"
+                  if window.is_maximized()
+                  else "window-maximize-symbolic"
+              )
+
+              self.maximize_button.set_tooltip_text(
+                  "Restore"
+                  if window.is_maximized()
+                  else "Maximize"
+              )
 
           def show_page(
               self,
@@ -1650,7 +1720,7 @@ autoinstall:
           def build_overview(self):
               interface, address, gateway, dns = network_info()
 
-              page = Adw.PreferencesPage()
+              page, content = new_page()
 
               connectivity = Adw.PreferencesGroup(
                   title="Connectivity"
@@ -1665,7 +1735,7 @@ autoinstall:
                   "Network"
               )
 
-              page.add(connectivity)
+              content.append(connectivity)
 
               devices = Adw.PreferencesGroup(title="Devices")
 
@@ -1714,7 +1784,7 @@ autoinstall:
                   "Mouse"
               )
 
-              page.add(devices)
+              content.append(devices)
 
               administration = Adw.PreferencesGroup(
                   title="Administration"
@@ -1742,14 +1812,14 @@ autoinstall:
                   "Software Updates"
               )
 
-              page.add(administration)
+              content.append(administration)
 
               self.stack.add_named(page, "overview")
 
           def build_network(self):
               interface, address, gateway, dns = network_info()
 
-              page = Adw.PreferencesPage()
+              page, content = new_page()
 
               connection = Adw.PreferencesGroup(
                   title="Connection"
@@ -1781,7 +1851,7 @@ autoinstall:
                   add_icon(row, icon)
                   connection.add(row)
 
-              page.add(connection)
+              content.append(connection)
 
               ipv4 = Adw.PreferencesGroup(title="IPv4")
 
@@ -1795,7 +1865,7 @@ autoinstall:
                   )
                   ipv4.add(row)
 
-              page.add(ipv4)
+              content.append(ipv4)
 
               self.wifi_group = Adw.PreferencesGroup(title="Wi-Fi Networks")
               self.wifi_rows = []
@@ -1807,7 +1877,7 @@ autoinstall:
               scan_button.connect("clicked", self.refresh_wifi)
               self.wifi_group.add(scan_button)
 
-              page.add(self.wifi_group)
+              content.append(self.wifi_group)
 
               advanced = Adw.PreferencesGroup(title="Advanced")
 
@@ -1828,7 +1898,7 @@ autoinstall:
 
               editor_row.add_suffix(open_button)
               advanced.add(editor_row)
-              page.add(advanced)
+              content.append(advanced)
 
               self.stack.add_named(page, "network")
               self.refresh_wifi(None)
@@ -2009,7 +2079,7 @@ autoinstall:
               GLib.idle_add(finish)
 
           def build_sound(self):
-              page = Adw.PreferencesPage()
+              page, content = new_page()
 
               group = Adw.PreferencesGroup(title="Output")
 
@@ -2046,12 +2116,12 @@ autoinstall:
               row.add_suffix(scale)
 
               group.add(row)
-              page.add(group)
+              content.append(group)
 
               self.stack.add_named(page, "sound")
 
           def build_display(self):
-              page = Adw.PreferencesPage()
+              page, content = new_page()
 
               group = Adw.PreferencesGroup(
                   title="Connected Displays"
@@ -2074,7 +2144,7 @@ autoinstall:
                   )
                   group.add(row)
 
-              page.add(group)
+              content.append(group)
 
               info = Adw.PreferencesGroup(
                   title="Configuration"
@@ -2095,12 +2165,12 @@ autoinstall:
               )
 
               info.add(row)
-              page.add(info)
+              content.append(info)
 
               self.stack.add_named(page, "display")
 
           def build_keyboard(self):
-              page = Adw.PreferencesPage()
+              page, content = new_page()
               layout, variant = keyboard_info()
 
               group = Adw.PreferencesGroup(title="Keyboard")
@@ -2119,12 +2189,12 @@ autoinstall:
               )
 
               group.add(row)
-              page.add(group)
+              content.append(group)
 
               self.stack.add_named(page, "keyboard")
 
           def build_mouse(self):
-              page = Adw.PreferencesPage()
+              page, content = new_page()
 
               group = Adw.PreferencesGroup(title="Mouse")
 
@@ -2146,12 +2216,12 @@ autoinstall:
               )
 
               group.add(row)
-              page.add(group)
+              content.append(group)
 
               self.stack.add_named(page, "mouse")
 
           def build_admin(self):
-              page = Adw.PreferencesPage()
+              page, content = new_page()
 
               group = Adw.PreferencesGroup(
                   title="Administrator Mode"
@@ -2223,12 +2293,12 @@ autoinstall:
 
                   group.add(button)
 
-              page.add(group)
+              content.append(group)
 
               self.stack.add_named(page, "admin")
 
           def build_updates(self):
-              page = Adw.PreferencesPage()
+              page, content = new_page()
 
               if not admin_enabled():
                   group = Adw.PreferencesGroup(title="Software Updates")
@@ -2240,7 +2310,7 @@ autoinstall:
 
                   add_icon(row, "changes-prevent-symbolic")
                   group.add(row)
-                  page.add(group)
+                  content.append(group)
                   self.stack.add_named(page, "updates")
                   return
 
@@ -2270,13 +2340,13 @@ autoinstall:
               self.update_progress.set_visible(False)
 
               group.add(self.update_progress)
-              page.add(group)
+              content.append(group)
 
               log_group = Adw.PreferencesGroup(title="Progress")
 
-              scroller = Gtk.ScrolledWindow()
-              scroller.set_min_content_height(280)
-              scroller.set_vexpand(True)
+              log_scroller = Gtk.ScrolledWindow()
+              log_scroller.set_min_content_height(280)
+              log_scroller.set_vexpand(True)
 
               self.update_log = Gtk.TextView()
               self.update_log.set_editable(False)
@@ -2287,9 +2357,9 @@ autoinstall:
               self.update_log.set_bottom_margin(8)
               self.update_log_buffer = self.update_log.get_buffer()
 
-              scroller.set_child(self.update_log)
-              log_group.add(scroller)
-              page.add(log_group)
+              log_scroller.set_child(self.update_log)
+              log_group.add(log_scroller)
+              content.append(log_group)
 
               self.update_running = False
 
