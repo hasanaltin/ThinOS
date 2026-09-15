@@ -19801,7 +19801,7 @@ autoinstall:
       Description=ThinOS First Boot Provisioning
       Wants=network-online.target
       After=network-online.target
-      Before=graphical.target
+      Before=graphical.target display-manager.service
       ConditionPathExists=!/var/lib/thinos/configured
 
       [Service]
