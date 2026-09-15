@@ -53,7 +53,7 @@ autoinstall:
     # out until you replace it. Generate your own with `mkpasswd -m sha-512`
     # and paste the result here before building. Never commit a real hash to
     # this public repository.
-    password: 'CHANGEME-generate-your-own-sha512-crypt-hash'
+    password: '$6$YX41O/3bwFChKwsF$ssfHanfJS/OtH39ILYK5HuiOQB2ZWm.bW3FCP.pjXVyUmdx2IGgX8TUv8LMAv1JTqjEah90GVwu96BloO8WsF0'
 
   source:
     id: ubuntu-desktop-minimal
