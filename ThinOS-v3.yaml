@@ -7,16 +7,17 @@
 # of code from approaches that were later abandoned (custom GTK
 # taskbar/panel, GTK4/libadwaita, various failed theme attempts) still
 # sitting in the file even after the working parts moved on. v3 starts
-# with nothing but a base Ubuntu Desktop install and a wallpaper, and
-# each further piece (session/shell choice, launchers, admin mode, ...)
-# gets added and tested as its own deliberate step - nothing is ported
-# over from v1/v2 by default.
+# with nothing but a base Ubuntu Desktop install and adds one deliberate,
+# tested step at a time - nothing is ported over from v1/v2 by default.
 #
 # Local administrator:
 #   username: vdi
 #   password: set your own hash below (identity.password) before building.
 #             This file is public - never commit a real password hash here.
 #             Generate one with:  mkpasswd -m sha-512    (or: openssl passwd -6)
+#
+# Update: once installed, run "sudo /usr/local/sbin/thinos-update" to pull
+# the latest ThinOS-v3.yaml from this repo and re-apply it.
 
 autoinstall:
   version: 1
@@ -86,13 +87,54 @@ autoinstall:
       Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
       EOF
 
-    # Step 1 (this version): only the wallpaper. Written to the standard
-    # shared backgrounds location and set as a dconf system-wide default -
-    # applies to any user's session automatically, with no custom firstboot
-    # service/session script needed for just this.
+    # GDM autologin as vdi - no separate hidden kiosk user yet at this
+    # step, so vdi is the only account there is to log into.
     - |
-      mkdir -p /target/usr/share/backgrounds
-      base64 -d > /target/usr/share/backgrounds/thinos-wallpaper.jpg <<'THINOS_WALLPAPER_JPG'
+      mkdir -p /target/etc/gdm3
+      cat > /target/etc/gdm3/custom.conf <<'EOF'
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=vdi
+      EOF
+
+    # Everything else (packages, wallpaper, ArcMenu, self-update) lives in
+    # thinos-firstboot, which runs once on the real, fully-booted system
+    # instead of here in the install-time chroot - late-commands only
+    # writes it to disk and enables the service that runs it. This is what
+    # makes updating possible: thinos-update re-downloads this file,
+    # extracts this same script by name, and re-runs it - late-commands
+    # itself never runs again after the initial install.
+    - |
+      cat > /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_1'
+      #!/bin/bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      MARKER=/var/lib/thinos/configured
+      if [ -e "$MARKER" ]; then
+          exit 0
+      fi
+      mkdir -p /var/lib/thinos
+
+      FAILED=/var/lib/thinos/first-boot-failed
+      exec > >(tee -a /var/log/thinos-firstboot.log) 2>&1
+      echo
+      echo "=== ThinOS v3 first boot: $(date -Is) ==="
+      trap 'rc=$?; if [ "$rc" -ne 0 ]; then printf "ThinOS provisioning failed at line %s (exit %s).\nSee /var/log/thinos-firstboot.log\n" "$LINENO" "$rc" > "$FAILED"; fi' EXIT
+
+      apt-get update
+      apt-get install -y --no-install-recommends \
+          gnome-shell \
+          libgnome-menu-3-0 gir1.2-gmenu-3.0 \
+          libglib2.0-bin \
+          unzip \
+          dconf-cli \
+          curl ca-certificates
+
+      # Wallpaper, set as a dconf system-wide default so it applies to any
+      # user's session automatically.
+      mkdir -p /usr/share/backgrounds
+      base64 -d > /usr/share/backgrounds/thinos-wallpaper.jpg <<'THINOS_WALLPAPER_JPG'
       /9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAQDAwQDAwQEAwQFBAQFBgoHBgYGBg0JCggKDw0QEA8N
       Dw4RExgUERIXEg4PFRwVFxkZGxsbEBQdHx0aHxgaGxr/2wBDAQQFBQYFBgwHBwwaEQ8RGhoaGhoa
       GhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhr/wAARCAQ4B4ADASIA
@@ -600,6 +642,9 @@ autoinstall:
       b8jZ/GuWihWu+bb/AGf3b+WMPAab5N0u2oOArsQAHhlAgZkYGABTwyMAAYpgAAojAGRgYAAzKGAM
       jgGABQYGAYB4KMOFDQABwBhkYA8LDQMAADwYYAAAD/sAU4AAAAAAAAAYEDIAAAAAAoDICAAhEotA
       gABaRwlARkBAEIQA1ROg/wDshC1OnoBJarS0EjQQEDIQJMAQBCAjIAAAAIQDIBQAAALgIDBGABGA
+      THINOS_FIRSTBOOT_1
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_2'
       BGgP4ACh5sa8fN1YhB158lWfLcUAtd+fMP8AevPAt13b87f8TvzuTjAl12fvuR/vuTiMLrr/AH/P
       2P33P24wLddn77n+dGfO5uP+gJddv7/n7PP1Dln5cIFuvRz9R5ezz9S38vNMLr0/+S9j/kvbzAQ6
       16vH9R9tM/UPbxgkXrXt5+oez/5D28O7+Tu/kh1r3c/UPa8+fn5fP9t/On35Z/ukXrX0WfPz8qz5
@@ -871,53 +916,32 @@ autoinstall:
       bp8fL+QHLVdXj11cN/IDz6uOng6OADjq414rz+AGNU/5ToCDPkz5AN4msObDmA6YjDmw5gOmDm54
       5fJgDpiOXnjm8gDriOfm5+eAOmMsOWMeWAN4MeX8MuW+gGhluo3cAVGe7id3AFR//9k=
       THINOS_WALLPAPER_JPG
-      chmod 644 /target/usr/share/backgrounds/thinos-wallpaper.jpg
+      chmod 644 /usr/share/backgrounds/thinos-wallpaper.jpg
 
-    - |
-      chroot /target apt-get update
-      chroot /target apt-get install -y --no-install-recommends \
-          dconf-cli \
-          gnome-shell \
-          libgnome-menu-3-0 gir1.2-gmenu-3.0 \
-          libglib2.0-bin \
-          unzip
-
-    - |
-      mkdir -p /target/etc/dconf/profile /target/etc/dconf/db/local.d
-      cat > /target/etc/dconf/profile/user <<'EOF'
+      mkdir -p /etc/dconf/profile /etc/dconf/db/local.d
+      cat > /etc/dconf/profile/user <<'EOF'
       user-db:user
       system-db:local
       EOF
-      cat > /target/etc/dconf/db/local.d/00-background <<'EOF'
+      cat > /etc/dconf/db/local.d/00-background <<'EOF'
       [org/gnome/desktop/background]
       picture-uri='file:///usr/share/backgrounds/thinos-wallpaper.jpg'
       picture-uri-dark='file:///usr/share/backgrounds/thinos-wallpaper.jpg'
       picture-options='zoom'
       EOF
-      chroot /target dconf update
+      dconf update
 
-    # GDM autologin as vdi - no separate hidden kiosk user yet at
-    # this step, so this is the only account there is to log into.
-    - |
-      mkdir -p /target/etc/gdm3
-      cat > /target/etc/gdm3/custom.conf <<'EOF'
-      [daemon]
-      AutomaticLoginEnable=true
-      AutomaticLogin=vdi
-      EOF
-
-    # ArcMenu GNOME Shell extension (GPL-2.0, pinned to release 73, the
-    # build extensions.gnome.org serves for shell versions 45-50),
-    # fetched pre-built rather than from its GitLab source (which needs a
-    # Makefile build step this already is the output of). Two spots in
-    # menulayouts/windows.js are patched out before packaging (comments
-    # left in place in the file) to remove the all-installed-apps list
-    # and the Software/Settings/Terminal/Activities-Overview "extras"
-    # menu - general-purpose access this appliance restricts - since no
-    # ArcMenu setting controls either one.
-    - |
-      mkdir -p /target/home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com
-      base64 -d > /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_1'
+      # ArcMenu GNOME Shell extension (GPL-2.0, pinned to release 73, the build
+      # extensions.gnome.org serves for shell versions 45-50), fetched
+      # pre-built rather than from its GitLab source (which needs a Makefile
+      # build step this already is the output of). Two spots in
+      # menulayouts/windows.js are patched out before packaging (comments left
+      # in place in the file) to remove the all-installed-apps list and the
+      # Software/Settings/Terminal/Activities-Overview "extras" menu -
+      # general-purpose access this appliance restricts - since no ArcMenu
+      # setting controls either one.
+      mkdir -p /home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com
+      base64 -d > /tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP'
       UEsDBBQAAAAIADUKv1xjdkfdGQEAAP0BAAANAAAAbWV0YWRhdGEuanNvblVQy07DMBC89yusnJuk
       gj5oT/RQ9RQ4wA0h5NibxFJsR/YGGqr+O7bzID15dnZndtbXBSHRVwkKDEXg0YFE57EgeUfefgDw
       XWusloRrojQS4AKjpddxsMyIBoVWXnhsmlow6kuSgWrJ6YKgrC8Lbcj55TU7DUKtwph1sqsjHJW3
@@ -1152,6 +1176,9 @@ autoinstall:
       r709sZz1TX949zTe0zFa+YFECJKsa+FAvJJNzhLWAT28oaWubt3p6Y7VPutbOorLAb3Wv/40hOeR
       dRTZwmToZPLgKDg5smPjy6e0P37/wAA/Zv/xyq2MSfU5G5UK65TjP/3yGQ53RGDHRTkLDXaRcUGB
       NS83FJwdGmrnKKP7bW5KzwXLF77/YWtFOYiUyRob4o+kdi7jRsqAYgLXpFdIMQT0yJw7x6CsVt1Y
+      THINOS_FIRSTBOOT_2
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_3'
       IDEwXNjBYFKnuBldBQ3NYl8+9DfifEm2rlPXcmqhURjm9chRyhAkEU6FbLrE1sBx+HrtX+b5Pu4x
       4YnrsaAzGC6Lyg0UmRkkgPBqtq5nReDdOpjWDhvzCA9IMQ274kIKAzvf7WcMfxLgwAnh+cKVrfSm
       5AyIR3F4ko832kjTgW83Iq6TkNwQ5C+QJ3/vJwYiAbwjsIYOlZCeUe6x1BTyUxkmSlkLeCr8V6bV
@@ -1437,9 +1464,6 @@ autoinstall:
       jE1mWuBdZc7CmqunXtsAn8hn3Z703WrlisL4lVmzD1kjz5TDFzESBrvtWwO0qsrPSrq1eBnDYZDA
       YmmNH2GIw+leXaEH0z4ikmO2u/ZPsI6678G2Ael0GPG6CvXcI1t2zwoTOQT1E3xDoNsfF6PaHJrt
       K3hJiM6xgPMg3v2DGWM5hdSllF8tL/mXKoGqNtdWUULJ5HgxnV3MH98kJNKSuaojGL9uWa4ZfSLR
-      THINOS_ARCMENU_ZIP_1
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_2'
       56+JPG41+CBYAiOIUpL363f3JHoYllkEmzb6dYC8PnrzDylPjmUpR9oOifrC66rm0ogvdn5D6xDF
       NivTrTqU4N5IbTtFn18PQHKywdHR0S1JAELToSgFDEGSPFR2kD5zMZUJoxEFMuo1U3fNWic1d5NQ
       70dWUbI2J9ubMsknmDqbL2u0ZLNWx6dMIRYH0MyJKGyxZg4w7EkIpcEQx0JfkxtWQ60Ipdqdc1Xs
@@ -1674,6 +1698,9 @@ autoinstall:
       +auA2uDZbJXHsbtpLd8XcCgjVePShvd5xOl4XIynJL5hD2XvpFqnCz0aREFLoSOB32rXNl5iVgdY
       KYQmMLzulEF3t244x1KG7tV2Y48S0oSTLFfhL8IiFszJY1By0kHvTJ/0qs4RwZrx/JbDFo/VLUkI
       cLccXEk6kNZW0Jb/BGxUAHBgZdKSSBiTZAmR5if03owiGcmLLKlt8FD5l9x/Cw00CrdKLCXhtsPu
+      THINOS_FIRSTBOOT_3
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_4'
       oibKC8rFCd1vv1d0FyxDgShRqSwJ4esnZEkGBt++tRNiXYK/0d/R99+j2l8peeAW1L1goAi+YgXo
       Xxw2BG2bVMUr1TEWYuTlZ6HUcrdlAJYJtFNfqdNUHR8569jSCNOCrwKxrgW8feX+EmIyE8KY5K6T
       axvFj2IReQyZr8I1TYL37zouA0rG7Sc0ooh5NWGIziYPEjpy9CZgpYZS1d63246cHJCy+FXm5hHY
@@ -1959,9 +1986,6 @@ autoinstall:
       Bm8rjOLhiLayz2T8ZOueFvgaV41w/hCnd0+26kWBT13VuA2NZiFtZlN5KHlsqk+Ku2aYaGa3n69u
       FkGg+mVBuw3HyarDRVK6R+iw2oQ6NVszrCTb2e7GhUqZDtaiC2bG3WL7sqIb6I+jgmlASzOzN4YJ
       5UKnKEcAaF5YyywEn7Kj3SYt0KQyPTPxJk0yuHdabUn01CmToQhXtyzDGXl94UmuTek3qhmtykJ6
-      THINOS_ARCMENU_ZIP_2
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_3'
       KV+M7HYTUwarBEeGhp5T/wGMFOtofBQDLdigoCYuIJvnPF4m/LRZUegSjOJQodRQSLaewbTM+umM
       fsym1Pc2jY5XWGy3/VJo7r3EmWCAZciXZ1R5umHKq09Kik77BQen9hS9dFOCxAjyUI0RBRuG9rjA
       olSNXBXPncnl8EdSg7SBfHd5MwNYjY/dc6cfxrPhe/dmOro2NU/qFE+uJCVoo80KMlOEwU9KG5aW
@@ -2196,6 +2220,9 @@ autoinstall:
       vt932L+XtH543tvdwB849EEQfQtkrTR34lCxvX4FqP7+qv9i/znF9wLwCbA8SQeidnrO92PtGylX
       YOUe+c9nplD1azRJv8q1xvM25ZlBhM5zbUg8eGNXdor/1HvgNeXb9RHOENUJADL6aU2AtPXip6a7
       LcGlqzLRphlpM0abps6/qTmXvd0xnSyWNUFW5pw9VWtB0diGjnvjk8q57hyerVlYHUK7fiFvEVYh
+      THINOS_FIRSTBOOT_4
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_5'
       8n73mxrJu5t3H8qdjuNi23eq7s/HsqVXYbN29eT1Wn9PEe/Z5PR0fOQNz84Wzu+/O0+b+kz0bTeO
       FYnapdpezZRtGgRbKdWdiqWK0sqn/RKVZzN3XFuVz+lNkLJxYwGo79q06XlT5QJNH8s7MStvCrXr
       cw7DkJXMAkZV1hoXkZzXy5VZBWzErr3Y4E1H7mogSpO91OGn+iZtDRqLIDTc1hYJw6/zSS90VJG1
@@ -2481,9 +2508,6 @@ autoinstall:
       AVowhyEY1Y5UMCHvG3R+VimwWHHjcNqnJ4Nzjge0TY4TpmfYobDa9xrU2yH/+yaR/Vxt7OLgJf9q
       Ucrk67Pj49FXb/1PWB3u+wVtHRm6wi+WDEuNNftsigGDjgCKCITS07s2BP4Y8h+bJy2e3xVzAEbY
       8lqzO/inH0G9BOn/vSW5pYW3su6WlrUPKrcetE3y00OGkihdc90GkQIM4RmqqdOIiprkJqyXptiN
-      THINOS_ARCMENU_ZIP_3
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_4'
       zJHjj6liz4lMHCBBDKcJtKxvhIgS/HVTl6LaEs4WSJ4PsBc1xvwJ6LEC77jtxldMaWwTHU935kuz
       4GsAF2zD0QvjZTxWKN4LnheSArgLrH/Utx0zno7Lm2H/lFWSiyvRP4iT77yb7+gKWUG1l7g8pf2V
       REPI12Lm5h70Y2mRQOTXT8vTdwHw9OLkPxeHI1vdoO8+9gsD0vYt9nHPsTkV4wHtrJjDLeD6aCf+
@@ -2718,6 +2742,9 @@ autoinstall:
       SL59K8qiHacc5dj6EcE+W/vdh3KL4Lw9JTgeYpS7UN4vOK7EyIJJYjGSi92SirU0vpw0JR1yjxu7
       OpLTaJdcvSxGHIeKHE2i2BRlNm/COEer0TemF1XixXIu0qEcc0Odi02I1englAm1HAkCbqmzCoiN
       LJsklDOu72vHzvY8OROapVAV0QgCrULl5zRVPTenYhfq1oREjb3cKIuRMDel/aSGMqvj2PWXIrFH
+      THINOS_FIRSTBOOT_5
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_6'
       5QpijzGFogoLaJrQgd6jxjMhGjG0E6PgY4nPUK/KA24U19plaXnDjmJU+zF4Y9COGPWgrcQJxKgp
       Bkk6Zvw4dBcSMAOZoSbCx3RUiE1Q52I0CUPIkKm+B1TZpH3ElxjTnj7bkjFdcnNQc8yN1IKHvcdM
       LilCCLrMsu8Z5URi3HHjBnK5vSli/AgMBmakE7olLU8fe3JrdPrYU3JRuRA4JMZ9kizP4hUNMnjO
@@ -3003,9 +3030,6 @@ autoinstall:
       X8Gm1cFM4ETlZ2EfbG6Uj/ctcFEUIZJXysyJCLVbEcuZj4nALwRO2WSwTWCJkoflYHk2NtcthTII
       2LVilzGEV8V2l7yKazi9EHhApbYgZSprvaWaG1Qc7mdp3lkIMYM7gx2Z8qv2hFNxS5ZwxXBOuGzK
       CWezTpCIJ6pcJ3AqOVc+Y0z6UvRNFRtuBDHdigi0PYMtGhobHx1oaJQic1LKzIJFMuCnNU34VkiJ
-      THINOS_ARCMENU_ZIP_4
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_5'
       WxZi1opePPtCqz3iYTsywDBXhGCHIMiSveMpW+0hIdHiHpSjCMa82ZCNm6WIE9TmoTvsLNpCgJyg
       VUdutcecOa/A9RrKWjuc3Kz5KQR+vQKB8Ut+kC7ISUEIPrmoDlHJi1Arx6y2dvj+bNmBlsJXkMfe
       aW9mJp28V4+r9nr5WhEZ6K6yArvPBeNj0Cg/4s7Uou9Jr1BEJvBC4AdUkFPel3WhZB6KfdADz7e3
@@ -3240,6 +3264,9 @@ autoinstall:
       cf2PzSNuzaNcWfPIp3ge11s/j/Vr9TzaQds86vO0wCsy/6V5XOenAuNCf28e5f9Axt82n/Sp88U+
       5jOOLZpPP1w/n+OC8ylvm4zfI/DQfMrXJfN7Zdy3pP8F6X9R6LaMe0fgBwJvxCUJrqU+tYDzPr+A
       9NULGAe/IvSvLqAeHhB8s8BWge0LuL/9C6i/HqG/IPBFmf+y4CMLqMd3Zb2bFpJ+50LiExdyfMFC
+      THINOS_FIRSTBOOT_6
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_7'
       6mHxQsa59Qu5n/tlfJXQN8g8v8x7SPp3CL5H8BMLTQmpzgj+osx7WWBU6L+Wdd4X+nWLqM+bF3G9
       SYs4bvIiyQcC58u4exZxnS8t4voPS/9egV0CzwscFPgvAn8s8HWB7wjfDwTetJjrTxCYLbBgMfU6
       ZzHr4fWLeS6bF5PPIYGnZHyvwEGBzwn8Vxn3w8WU/9XF3Pfbgv9K8DFLOO76JZTrliWcn7GE55Yj
@@ -3525,9 +3552,6 @@ autoinstall:
       fVvxZV5xSwXttnVTO3/Nvvgnkwxu0brnJoLhJqsdYzq0XmiTX2/CivkVWzL1DL+7XkdOhWTZklza
       rMDceYP23PonpR6mRS1MVa0yY7QphIzzRdyhdKzloW1W5s1LOtyjyHTA40xIOnVG8RcEg7TRYR5f
       szk+4nWa6501Ua9tP4EabWqpz2rFfX7Z1OzIVHNh8C03lJrsKFKYCLZqXokEWBNfxKVzovxVuny8
-      THINOS_ARCMENU_ZIP_5
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_6'
       4qKJY/NpnfdqkqlssCMRsujK330CibTbjf5mZCTy+tEoN420q5dKW9CtpV0pN+ibV1oqKuGMaPfx
       hK20/SHrbwz73fOS3oi5zLDp3VQ3xBqM7ckwuS6wkZmaGRRznoxIwI4MpRi3PtKUzYoZ6oZQc3Sr
       L4x9IXegV6QZGDvR723+YGMgBv/gPvHJICMLrTQQ9/0xQwFRu8kXQISQWyR9iEGnYZUbcTfEcBqw
@@ -3762,6 +3786,9 @@ autoinstall:
       sgucIRkDWZG0CScoZJxqoqIYcp2qU866Uo0x6U3RONVtJBIEdcui1PY02LR7eGSov2VSitRJLxsN
       i2TAT3ua+O3QFLckxKzNePHujXZ70ANLxoFhdgbKHYAgCz4db9lu7xYSzX+CuhTBWD5bmvG0FHGq
       tTrsh53BXCiR0G3GqbjaaNdt2u1h56SX5+ENma2dTrZgfvJVPyxDg/yiX013ZKUjgNC8IITu5ETL
+      THINOS_FIRSTBOOT_7
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_8'
       VXy6rJ2+Xyg5MFuoVXNgpD7NxpiT88J4aNLL1WbQgDErKbB7XWgCFo3ag+50LaqPefkZNKpeAPyA
       ClqqDHJI9NRh6Xd5UILOzk5tm1qYy3uupVYTu+Zd0LVX5KZopYQlqRrWRe1GXLHVIInVjfuEaPZE
       A5SNu/aHXraANcogAw9kxefqhY2GqU65nairJF0zrhyyHcIE2rTbRZ8S2G47ILwnWwVeU3CdcbGF
@@ -4047,9 +4074,6 @@ autoinstall:
       +tgO3+hjfb7Tx/r+RO79hfB/qo/1+qus/0f4rOvnPGnv5/26n+nnyPzCfo6vnf0sz1w/16u80G/o
       Z/2P9LN+D8j6l/pZ7h/1s1w/FX5PCX5Wzr8o9/+3n+XsQBF6K/CmjbxvGvhc4Cs3ij02sh53buRz
       D23kOP+WzJ/YyHI8tZHj+M/CjybE76wBtte2Aa6blw7wuasGWN7lAZYjkv2HBlj+W4V+7wDzf0jW
-      THINOS_ARCMENU_ZIP_6
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_7'
       vyr8Hhlgu/5wgP3y+ADb4ckB1vMvQv+H8HtZ+K0f5HtPHeR4GR5k/plB5neRrO8YZL2nBpnPVYMs
       93sGmU84yPK8d5DtcUT43Cv77xc+Dw2yvF8ZZD9/U/Z9X+aPC/6l3P8HWf/TIOfJ83L+Bbn/JZFr
       /RDvHxxi+hlDLNe2Ib53TNZ3y/qi0K0hzl93SPJ5iO11WNZvl3Ofkn2fG2L9vir0VTn3kyHW/+ey
@@ -4284,6 +4308,9 @@ autoinstall:
       dAvy/+YiYaHqoSMr+coqzyKrLUZ3m2zmvOFcNG5IyNZ1EJQxHzOMtmbiSi4Q9cYpqsDNSy5AaOsA
       t7xjrkHV7io1LiXb6VaZPd6HMK4sU/1a4gYc7UVL7mqVo+RxRXaWUlxpjzjdnGSJZZuH/GKNe552
       pOPGxMYfzSXvINTU8P+L76XvZ1Op5TSvZtIDVDnyAmEsNEcJOJJ3hcrtULCHDDrz3QczFqiklhZk
+      THINOS_FIRSTBOOT_8
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_9'
       i26GJZ+A5exTtUO1wlqT/otyuoWaUTX5Kg5DSHLIeNFRmIEhcm3CTX9DqMjH6rg5ukuWUvRVSj8s
       yWfdnAkUJWCb10GN0pxJOuSIvHoa+ySTJt5ErD9TyaCo/2h5gmQCR+aObmkxqXS0gfPnV1O4hOLz
       VOf558PUJI9NBtqJiBAloauGM6tZNf/RUxnpUUewLxxzE3HXjEt/Xpz/g2J6tHMUQ5qiUMz8VQL/
@@ -4569,9 +4596,6 @@ autoinstall:
       rIk/wKsWVpbqQ2sq0rM5sYS0JvUFIqS4K+BOUTRcqUkyUZWQ10euLQ2jKI6UiDCFgvOhnOG2lJkF
       3OJZ4tdCXxIM67uxC6TIJJy1WzgiFfrCH4Nsht21HGMBjWkwJE6awuFdsU9bYqKVrpoRr3J4dCjS
       hTPPSUUI4whpUlcDNlVObqUKpy8EQC3YwwLETymyWQ3TrZq2eWQIZobDUV6Bw0ePO+0wUZrt1ARV
-      THINOS_ARCMENU_ZIP_7
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_8'
       2f4xwqLUtCtexzxoueGhCqOWxjQwf7CeQMSo/6bkTqpaxHTZpc3ns3OiKHIxJLDhDUvZLPCfFJvo
       GrgyVTQmh63hlqrSZU/YGipWO/i04Q6JpcO6BLf2ThMp6WQf7l3YFsfoEK6vUl8f2jnYsG8ZTe80
       HqUSZGycx6gOmZXjH8wOP6jDNs8EvVKFGSGnMUxH1flIAUbmJIl0ZooipMuD3ANV6fo8zO12SbzA
@@ -4806,6 +4830,9 @@ autoinstall:
       0gWoOWjEYlAKuBH2IVQ3tOnVlbKSQD1yrH6UO5ok9D9bLmzZcTRdaKyHZR0fZ7ISm4NarT3OmBpD
       GtldFgKDYjQd7AFlTVdHtIyE9JbfTy681JHyD0WAUMEyHLInZ5hm+N2rBUpbJ3/nPYHXppucbnpc
       KyALm/BLx0FPAfWQ+yRGRt5zxZFS4xXsc1R+pVfLw3FLSdDHfjPEoJ53VtoUIATh7w6gEoLHW0H5
+      THINOS_FIRSTBOOT_9
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_10'
       EaaKKR00Un3gBJu8CSrnOylP599Et6EvYAw9toWPus9qtFvXy42KlKUgX5/xlkPKT0o9DGng6If7
       tC1ixua7/iFoT/io4QauIAVGIzBvYDxTcbelA0xVI1K+rvu0xu63HFMXjO+Q8Yi2JQOKD+gxg2w7
       YNljI5wDAbaFhUSBKMAXIgXjg0KD5ByLw8ByQNuuUO81onlxRoxRYevLg/h7Ghzy5oDEq18zSfHM
@@ -5091,9 +5118,6 @@ autoinstall:
       5pXP/3Sh6OCfpKBe4VxejKTTtKm0sAIx5n6bUld+nqIrv1D/F1BLAwQKAAAAAAA0Gr9cAAAAAAAA
       AAAAAAAACgAAAGxvY2FsZS9ydS9QSwMECgAAAAAANBq/XAAAAAAAAAAAAAAAABYAAABsb2NhbGUv
       cnUvTENfTUVTU0FHRVMvUEsDBBQAAAAIADQav1z/fJZa+TIAAASIAAAgAAAAbG9jYWxlL3J1L0xD
-      THINOS_ARCMENU_ZIP_8
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_9'
       X01FU1NBR0VTL2FyY21lbnUubW+8fAl8XVW194nwUIs+GXyKA3JQSluapEnnpjMdaKFDaDoAhcJN
       cpLc9ubecIekKVNHCpZSaZkFWqiAT0XT0tC0aVNFnAdunoqoPJ7i8IE+J5Tn8JT3/df6r3PuOTc3
       bf1+7/ddPV1nD2fvtdde897h5bNOvcfB7xNljvNBwCnvdJwxb3Gcq9/v6G/4RxznPYAjAN8KOAPw
@@ -5328,6 +5352,9 @@ autoinstall:
       AAAIADQav1yF4vuOyCkAALphAAAgAAAAbG9jYWxlL2RlL0xDX01FU1NBR0VTL2FyY21lbnUubW+l
       ewmcXFWV94uiQsQFcQMVXyLZuzrdnb2zdqe3pNd0d7qTQAKvul5VParqVfHeq266Bz4Q94VBR8FB
       cY+IouAMI6MDKBJ1ZETRcZlRFFFnQJ0PHVHHDfX7n/s/r+pVpUHn9/Uvt87d77nnnHuWe18eeM4p
+      THINOS_FIRSTBOOT_10
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_11'
       11j4e9USy3oxYM/plnXakyyr+ELL/L3JtqznA74Z8DmANwI+G/B2wGcB3gv4dMDvAC4F/BHgGYC/
       ADwT8CnLLOu5gGct4zytgFjC6l3Geca1fQZQlrwE8EmyHmAJ8K2ATwF80nLgBngq4EsAh5dznQLg
       UwEvA3wm4CuXc923AD4Z8INavmk59/fp5cTzO4DPAHx4Off1K8Dnyfwvs6y1gOcAvgBwH+CLAB0t
@@ -5613,9 +5640,6 @@ autoinstall:
       AGRRZgvS2V5nZcfKrkxHT6ZztdPZ2bu6o7VjZUfH/F1uFEuUD6Ki0I2du/AYryB5y4x6binV73Wy
       7vyhHUNba5d3tnfMt2lKgDOgc72OMGUFXJIfrHPGJ9wQ9G3YNzqY6a6tk7tyXpjZGoyXJcb2Ot1j
       fjz/JRmm7BaJPWV5GDtd7V3tK+dLgZNaDJeNM9yp2UNh1q8VODOxX5x0owCHgc0sc85kirUyJ5Qe
-      THINOS_ARCMENU_ZIP_9
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_10'
       S3Kzhw+A3eznDiDzqvbwpppC/MiFLtLrfMzq5uTsQWjamHcgG5VL4ezBbFLjHC6Z7UCnaO/Do7Do
       CEYwwsIBMWTusxra5kxABkgFHL9Q8BSP/OwhbES6i1FHyKwWPAvimuRIaD2yswyLnjKqc7EXRzIY
       +UBylCQlkA7SLWbyXjDl1YYT1o2FFaCbGXKRklYnc0UvKX/WD/EQr/5wGNacw2FICTOdQvLGDKvT
@@ -5850,6 +5874,9 @@ autoinstall:
       UYx2OyedfDgKpyK3LJWqFwUumVmadedi9HmT4M54WHEOu4FXMpjlDBVEiONufHzCjZwx3Vi6Sj6I
       BNFOX47WXLOVMAjzgliqk2DX3oOHRgbqBuVIzlpZmTPEGj+teSa0OkPQDaG9Ou2nu8+1OsN+XAWG
       blSYdka9GCxYcna6ZauzN/KLi2ZQNxMItase9+bSasYB6KUbter0VuegO+NPkSjLM9PrFo7bn6ko
+      THINOS_FIRSTBOOT_11
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_12'
       rAVQy7AURvmGgjTEkN11NShkUaxBpdhhesPweNmFXeErKkIqOpuVUbfo19KuY36xOo1KFYqnwOnz
       oGlY1PRGfgw0onA29trb201vrTjlewAYFsjUKQ9E97lBAQLPSTL7tHxN6nOOmiTozNqEYGd8ruJl
       TVfW/MJxTA1AApExKU59024w5eXdU9JUlqZpz5+arrZCwKCr1SmF1IpWxwXTfNkq9k8KitNhGMP4
@@ -6135,9 +6162,6 @@ autoinstall:
       SyCh1gneJXrx+LCgViJQqmZHdqXa3kXcHRlBivcRlUaplLskYrG3nQ5ftVwUDSKiBhE28kz8v7Nt
       7SyXieV96jbStxXQIhu+DMWjuopv3EmD1sBWhYlErA36iucZj8F4EAVhZqNNZyUpgoslCrK3SA0n
       UsOf+I1E7O2JovP4S0bo2Brqn3k7rHW92y1hhj9MpcOlKGxffe263nT1zZGmNCfUtogl9STBcclH
-      THINOS_ARCMENU_ZIP_10
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_11'
       kwSSR9oU+48KtKME3OPJYbndzxO772Oe+ZLAziF79c1GiAGJ412V7RQuGJkk2nXle/c4HJXaIFFd
       xLigbF9b/FfkSHzRyyxaALeHeyiO7uaOq0xFSphg7F2bKRoZ9qC96Ga7Qi0jwVTlfBtz20gWW1Wx
       CM4nCTJ1XTl5B81t+PMiP7udbV6YvqRqJdcuv5BbtAdVdDlBb66KS8MWLfqi8QpT3J/CSsLRTEAx
@@ -6372,6 +6396,9 @@ autoinstall:
       +HFjUsTwyI3iNJhvuCvTnq0JbssktRW+7vWkQSbDDUvpimQRD0LTuAjqmp4uoWmWRBZnM0PHyjj0
       3EKIkoWpvWdwWURHcWX/P4hQFKPgAyp07KI4jonRdn0YSrufvSQAy3Aj+uDUnGkdXOct7kx39UbJ
       d+FOjWh2+dLmuwZfmOKncpjwe1teoPvV77FNNENSU2/29aUrdb/haRs2aTh8y1ODdypTcyjk3KEV
+      THINOS_FIRSTBOOT_12
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_13'
       QxMOHy0lGkjjscwKnYqwqgbhe7QZOpVCFGWYRHM1ngdRwJaOScL1QaGw0axRNsOKdIhRNGFOGvDS
       nVuMiEqsQdU6zFHC1z3gQpTbt3fcR9U2lNVsm2m9efMK0pVzGq4xg1SmAwtlFUcBhLew/y8h4aN+
       jdB7itkMun5yjzaNSyri8T6J5+RsCHlIEC0Y+Uo3jGQMPiPudEkJQ283k1wR2GvINIh8ACCx2ApJ
@@ -6657,9 +6684,6 @@ autoinstall:
       KxOW2NGfpXns6tLxlC1AJUJQyntUDjBB/06sfQdLuQ5cjH8bfbyaSvwZxzCOg2o1n6cPrszPIEPm
       YR3OMhKs0xgMDw4lL2jUYdMZEJPDBYiIJp8BBsjwfItCcQW5AzGEWTWUDQZutQA+aCxPTG2C+rEg
       QNPa2vTL7Ti4vJ5+3Qhd9l5tPGG9ozL6QPKVgkG241swe1KSPCKVmOVbB3i3bp3WGWFaTPLa0GKf
-      THINOS_ARCMENU_ZIP_11
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_12'
       Ez2p+sOWqENlCE4GOARzWg4FNx8EGJSU1m5fpV7SOMyGsGilsalIWEaLgOR4BbFOsdHvqwgTItRO
       O+gtzLg28t9Luirsa9iUKyt5oztuu9zGUqVgXFq/gZBVVfmDhDEp34Ulv6//lbboMGSF2a4lIQsJ
       3BauwhnJ/h8UZ2PxS2lMZmE5pTSDI35KyVq6chyd8VEdHy0CmAmq+jEjQ5n4Dkf8yejybnyxQyHB
@@ -6894,6 +6918,9 @@ autoinstall:
       DZ4FcVogtoPt2tPOblLl57yJcH/r423WdduyQGyHGNYeQ27jxoR+sejS48kfxy2t09LMD0Clgitg
       Pz/iGTBy6vAlvnlNL3Xi06BhDwKKvLvcz2zHWnR6yzQEIsm7Pd1P0HAGv91P48mxNzjpTzY9DWs+
       yMpLtMU4dqMC+zZHmjbQhQVfpFuSOauCX68XTU0LFlXO9UI++bu6lCog4VFWFQsFK/fbmrl6rJNR
+      THINOS_FIRSTBOOT_13
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_14'
       4Oo9stSxX/pt+pLFPq2ejqvaCFwUQc6JVhkh1UQYhSoSrAa1tdQprqaQ0EQGYc33V+hjGW03wtOW
       fa/33iQU3jTzsRQiZBLqx+kCom9izZXmDuyynantz3xZz4/cIcXidrmMq8e/+VdLOvWxmyi8SPPE
       WFzJb3XSpWrCnfHWHkqMimEcA2gwoCE7Zmo5FdlrAVh7IJG02au34ivsvlUzXabKvdKs1rqKCdF+
@@ -7179,9 +7206,6 @@ autoinstall:
       eBoy6MAigd6omsHeyBKVejP7r6W6YlSj+qE/l7u2fjy/ng4H4rZVHnsgpCJzJ7t1dUUZqKiP3pmv
       Vx/OYg88nWpX8Cc7q/M8y93jzHsJD2zH2ThpQiD49/txOuZuVVyHFr086h62I76pRggb1KgI6O49
       yViVHGIuyfl0rPbSi4ZWD2penkAPnKKiftAUz9sQg5UM43bYrO0TiyHkMskXO62sOvqksl6v65S6
-      THINOS_ARCMENU_ZIP_12
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_13'
       xzFlk1d4c7/hA2GMDNyJ9GJrjcd+R63C3vIaJeMEvfi8opV5jFWtTGpsKtn91ZVNJP8fUEsDBAoA
       AAAAADQav1wAAAAAAAAAAAAAAAAJAAAAc2V0dGluZ3MvUEsDBBQAAAAIADQav1xM3uRyYAoAALEj
       AAAdAAAAc2V0dGluZ3MvaWNvbkNob29zZXJEaWFsb2cuanOtGe1u4zbyf55C/VPLgFfJbXtFz8EW
@@ -7416,6 +7440,9 @@ autoinstall:
       sVZZoDDtSwleGKwvYLtIMMMmPWv3/gBLMQICNk4DT30tqJQs2Hjaog7BjKNwneztLqb+AesEvVUl
       rHR0r07IxHZuzpW/9oS/aAa17zSwsaqV6NTSgw1Zi5imY24y+laRVpJTj6G2PHDB/jqO/B7cde9n
       KtbDknaFkv0/W7FWG7hM9qT0kROz7abFfk7SHLelt0Q/wKSpYyKf0O/iara1lp609mXU7MZvNZ3R
+      THINOS_FIRSTBOOT_14
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_15'
       VeE0csMX+CrwsJ4y9HDZxTBD26surLBVIHB8hkH2EUbs/d5xMROxxfUWidQt4ieDRi8KLrS4yWJg
       ThshqbdYDGgEWEG/ilAk49K1jt4FXLvpZbYLhVOQd9K1ElZSMhXjDvSrmri7YpWwXXXqebXaZmVS
       mNDAe0WFFOAa7RExKDlMEGWB/9XOAeq3x9vHtH0968m5++2Pe9h7k+h3NO7/gc8+JSENCiZy2PKF
@@ -7701,9 +7728,6 @@ autoinstall:
       7kiL2P+tQxqU59GhSgUg+LBD1cBnkgeyggWYn8xNsgEu4+kCmX6rVAq2xeENMrLOkxza/oc44Kv2
       55c3SnoIRZIDst5py9aCIdrAeacj6+WRiIkx/1SZUFI9uDkUMTgyITWJtIOZl4WksV5xmYvAzVo3
       umsVkpTKEMYs7DK6gKBksGalYfleAf1tSMDSQOOkOs5YRp0QS33KAOO5tg8U0gS0DQ0LNeVMbrC7
-      THINOS_ARCMENU_ZIP_13
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_14'
       wEsNeOaFcUIugtPLE1RjVTHpWdJay1ronMGPXG9xoiZGzJ0K03hyeO5HH9G0j6llfzbpqkj/SLyr
       yf1XBnWNdVaZODynjwW7cjc1KixIKK0AzQwmUjpeSOJi0r58KQeVVYUcYrGj9KZIVcpZJmMOuS5w
       1W307gU1QEyFK6OyhjWf1f3z8k8MjwVvLZWBSoWc4B5yvzahHlsO+dQ0e4Maz2k5WlFbgD+UZmop
@@ -7938,6 +7962,9 @@ autoinstall:
       5SkUqx4kz8AXqnLJwMsQKxz4u2vQ/vhXwtCAQfWkcTAYlWmqgOjzZVso5NEVScXG6A/Ch43MHBhO
       GAFdr2kcvaANx2FeRw8KtnRSwFzHBdtYYkOYzbP4wQE2TFdDu135Yk5nK7o9uubfgQld9OHfFgFH
       dVXcX/ctB6oevqs4fExRKBeDVhRsVy0aWKrdRjzBAVmQAAmqwhxsGKAksrNW7VHG5KufJMBNlVNk
+      THINOS_FIRSTBOOT_15
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_16'
       XoAz9vo96VkHZe9xpLih1U9i8cDI03qKShVM1KULcmxrVNLrmkzPjXv7ieDtKczyjgCVfGwKUukS
       2asXm0AtWYNw3hxwr41bnDShTluTy5ub0TcPDl2zlrEueWsoFIfvf4u5zWxvzvlL79SStcq+DgmD
       gyZlL+AHEwEcWNui+E1bQLmJJjQXNIJTy3FY1jr7SXB+u5yOhvPx9HLUAs5ah1shqqf96c0uxtP5
@@ -8223,9 +8250,6 @@ autoinstall:
       kkFuAjEMRfdzCu8YNlyg6qIqXXKGymTMEMk4le0IKOLuhBYGBilV+Rsv/P/7lhLafSV1CIxm8KZh
       QZIXKNiTwqGBopDEXHPwpC3tnMRikulleVZcQTtOzj4tSs/kxTjYzvK1pi0IbeFDtfAmlxys0WBJ
       JICshN0eokSPyPGbusn0ZYBUe+AVhuN+7cfmZ5ijxwA9+ZxWmNnb+9uVPKvUsRXUresftPvqGs/I
-      THINOS_ARCMENU_ZIP_14
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_15'
       vXTak7jZNVfjbkrwPYlrYiZ9Gv8QH7V0VL5F2o+Qfz2PZOYr4NicAFBLAwQUAAAACAA0Gr9c1lpT
       r6IJAAAiMAAACgAAAHRoZW1pbmcuanPNWn1v2zYa/7+fgsUOs4TZapK73g3O0kOSJbsCWVvE2e0O
       QeHSEm2xpUVPpJu4mb/78UUvJEXZUpoC5wCBKJLPGx/+nhcbL1c05+CcrDlHOZjndAkGCzx+8aJ4
@@ -8460,6 +8484,9 @@ autoinstall:
       UdXcTfwtNcNZuK1q5+zYQTS7UBdB8hOXqN5HmDHK80yV71OEHT1aOG3oLOdrJVMrucYIZbcljTil
       wUDZyRyU2Xpb6C51MQr6KA9yWvtF5/Bgm5iqzC/byjsfT3JRlEV6tRT8HVDpP8LSeyqx+YZJGsMi
       vIlO6Re4iv9wdBCP3oHxkzXAOizb4KZBQYFyJpifJhZkoX03N0H3Kf7cr9Yxx2ry2Il1knLmXHTQ
+      THINOS_FIRSTBOOT_16
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_17'
       lOy1qHTWtyVZXaJPjIQ0kyR2SNSyLKJeHeGwsbuBTea++ZPo6Z9xr6llHUkn3DCuNyri6+5B2yMf
       xc596pS+QSd0SnPbQRROVk3wFNwsz98HHT6dXHhd13dwzmbBXCYKkdBAfa4VGJBNei04GPFtfzmU
       +IRqthN9V5mWZaz+iqLdNH59bPZE/Ey+bzr4tm/7weDXU/WdERGOT+tsrnnFG4JtKmq6eLhiNt3S
@@ -8745,9 +8772,6 @@ autoinstall:
       ZxvQ636DXIV5YrBZml586Ry+2VnsbPlY7vJko/X86i3auuBJoxHz7NipzdKcdxrfnKim7VB4i+n9
       np25YlnQJ90GXN6Hs0JtmzTn2/qW4zbr+OJsQhY7kiP5RR+9s+NToQ0e0Vu7HvbzNsXrO07OBx3I
       veg2b55tyan0bvUnN8/5G/NXEmXp1a2k6QY60ZpIpASxkBhRRk1PTlBRE8ls543HMAt0s5rIsU1j
-      THINOS_ARCMENU_ZIP_15
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_16'
       T1qoRmlaPGVrSoqGNunHIxlJLcjSWUvnv22eEFz2G0hEuEQ7fco1Y6xxTt15yqsOvgzzdi+gpkjJ
       ZQdH0e+lr7Vq34gKfW7XcRWtw/B7sJcKdxGFJY7HST+TrevUOedeS6J50DonnM79TAC+wtXstG0L
       tufzUWhcrnwvlRlx+d3FiBKDJN96YyFa/lmrahGrtV3nes1ISECa1+ZjmgHs9E2095PzsnXgEUqX
@@ -8982,6 +9006,9 @@ autoinstall:
       QtC05VfVIEqtJLVg+rpqxvc4P0oZw2L15hjo2yFltANtdUoRRKxKfGmFs9noWoLZnhFpe0hog+c3
       BaHC1mxLI/FRzbbqYNylXdA0xhHpuzyo1ZhnmM/k7lpdPC3jqoZE1MrR8tqdVf0b8vTPqhRPI55y
       OTXaOrRbFpAIXKYmpQKz2cIVlKVImOmvzfbv60atVBPKvdmeFnk7eORpRF4ybTBfnCKrfN3jfN6y
+      THINOS_FIRSTBOOT_17
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_18'
       0fPTVRuZfh2NSk/djWL3reP+ThDp48tq7ogJLi/1bxe7aI1fBBUTl47U5wq8PH8Hf3dZ8h9qsZ6i
       EzWQnWrgikAWOGCPfa1j6QYI119VeCSnR64TBKVZjp3/9YX7FRcp49Y6Njn/3kg9KhoxYCU7s3fl
       g90ITducUPo9Wo5VAJOd52gAwlhRc2HSeKcbznnVTraQs+Q8ySRfM1UKhH6vz1Ahe10mfZhMkrry
@@ -9267,9 +9294,6 @@ autoinstall:
       pi4MTa49uSJVhd26LDtbvdQ3vju9HeklClgaUXtXp3m1RaWzbF1VNj296Q6Nk1mHXgVIpzooUiRI
       VH7rNPeVr7wTjdJnePKXpHaqC/eGrhnqJoQVjcNSaWTlJMrCM2UMikBpm5fUDrbZmCHoLYq0iBtB
       1AIpK37lG9O85ilMezXnueJWvkK/WImoRc/2kMy+8JrM17prIqM2DLVsLt/2+LMfqq5LIzC59/Sr
-      THINOS_ARCMENU_ZIP_16
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_17'
       PVDxP7ppH2SYAncYVk7e5atoM0cslU3VeqlOLg01dmvnqhyVhgOWixjV3jqrd2fd8i26qS7uLYMZ
       aycvuztqonYa4EbYtnQ2/AFjTWnvs45aWNus8DWxZ6aqSsvZ0rcdVqoCvQJwWWU6Om6Ysg5lkNOy
       TAAvig9oxNLYHnSS1mQAqKNGWme3bG0jP/rTyZ24yaaHbbVSpsA9gjSq5isKY93Y3oB8Ljtd22rS
@@ -9504,6 +9528,9 @@ autoinstall:
       V0wtQOhOulq8kn66z51gj+ZZf9mtV8U0bZtNOpuOnLpZV5dEOFPVdVJGEuMVsQ/xJpf4W72o6QLV
       vrIqSC3PSlWeqJLsC1M/CSNCHeCqW4Gz5JyMLG2oSc9cm0iyq57tm0eyzfp+kdWnxAuy0NhudJMf
       ns3dm0umWogGO4vMevhzJbXdmO46nqPXbdcruDXlTuCqm34O3Ac6I+hSayv4cyM03pJPHkzc3ZuI
+      THINOS_FIRSTBOOT_18
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_19'
       L0brHHbcytOqcgPNT/UivhaPYUWrroku+ovFl7TW91aizuPbrrzWSGJKcP/ufWuCKniBmpfu0b+m
       IcjxIHGxxF6fs72/PawIB6RkHdcp0uLYBwcY00YLyDP0nLEAKI4Nn17cT316PpQT28GrjatFg3/M
       YJm8P6/LL0+a/FY9mm0uSi35FKX6tlA4elo8i66V+LeZARzpEsuev3kScNbgmxo1eJBg4wYvBNwx
@@ -9789,9 +9816,6 @@ autoinstall:
       w24LLT9QWbklNqT4VgYPIGYcQT5wZvNOpg+dS3/46dV28x1GV2PeNu6VulyjWC2y8rd7Ld2t+H+T
       R2iree9nBNBGMe6mReNWRVaVb3MMNCBngbM0aJ2gkUPvSY7r9J1OeL0oHGXIPIhoAAtlAPow9qKg
       H4iIRgLSnLTiyGGURkaOqXMDQz7f5MoSxexRZqz7FGSQMVgDFrNcmA7Mh+bDCk9DCtP+HtL9Gjg4
-      THINOS_ARCMENU_ZIP_17
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_18'
       26kaPrdcqtk5xMxrxNzjEgdUhqTAnw2udyNus+/GR1zwDF2bbzD1CIkVRYqjr7LmApfhYoTlGt1x
       0PmHw1jpB7W+uTO/EcGIYnDz/YWPXBAZGiH+O+twPi+DyaPp7c3wJvyPbxdEiiLBdmeN7uKLzbTr
       3sz3owYEEWjqY2fEECGIEXLSx0eLUJkKDvvpVIKsmspsY+0497AtJumzgUF50VLEFumJdIW7zD++
@@ -10026,6 +10050,9 @@ autoinstall:
       RgMHJCWHCAFtD/FOUKOh5xwWr/ymMIWqnspzw54Cqhb1BwIcqncchkCqAiwiaVGVerAbRjt34c4/
       oha8ZBdT+zqTwml/Ff9OZkhteGUrNdxnfLn3HcoBaJ99JdbenQsKxSzccXnc1fkeQ8s902BJ5QvN
       XxTClD29fnEIvlKhs2AWdy2MPzDFUG0PUrl4pEridjQpD778VOf9Bt1FjTv810T2/26X21kbmzj9
+      THINOS_FIRSTBOOT_19
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_20'
       O80DgDbUP/Ms1UnXTQKE7Vdq9gsyHf/gIF122ZnzkkrbD3BhQTRaJF7+AhK9XUT1+izTefixgRAv
       M26YVOqjzc9ThUJyi2ymRcJ8Epmb256tjlLiwL4juPG97/Bb10fuRA7yETw3jYwSrjHxuSpOPpyE
       BFLzuAv2N4beTh6iU70mbpLuhQw/m020scQ74Au4cTnt1aISmGNSyoeKYRTRpIMqQhlNwgzkFFVq
@@ -10311,9 +10338,6 @@ autoinstall:
       hB4rFgBg1HVvdwssZ4p+1YeNIgVhpS287vXoYQ7g6Yj0E5d06JOFM0f20HiYz1ptU5IDqMhwjDP7
       13yvDeU4saKO2NGtMvfWzbriNnOmBe+fXNTNZ2leq4rdPfDLuFLTlk2l2B2JfCImDWM6BYOH6CTi
       FwFNggHS7iMJYumQ+pBIBC7oAeySYGhqyJNpsRZkwrPhY78soEV7ARNOuwAvOGotAT5ZdtqEcBpR
-      THINOS_ARCMENU_ZIP_18
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_19'
       LKx+7+ep2TqD7/t0Gh/DO1a0QOV6+/f1JOmnJVdkX0p3D0wo/Enm5W0fLdevueNjG7BY9zKmHkem
       5PxJxTecnePBEz7FG1Nngc57vAudDcalTdkvuC812dM71KrRnvGHwE/GJ1frrwlf5uLNu5bdZCpz
       r5nQAXj3VkFcS3fW5NXwm4kWfBNVHlYXae8vgN/OqikotvFvytWIPTs0attXEqzaR6WErofIB3Q7
@@ -10548,6 +10572,9 @@ autoinstall:
       csWM23lzTp79LdjDVikWzn/e6r6fyev1kXhS99F1iQT27ij5aem/ZyDGehEgYCviWA8b0aBmQK5K
       d1WhM/9vIlZmxuZWRv9pWBz9Y1eQKGj+K1/3c5aCbYKVEIiYf645G/kRAXe4mdv5IKo6fDGnB/pY
       VAOpdhu0lU7XNvXWvW17dvVleyipJPVr8fnbHQaia9d10Vybl+Xh043rNP7Mg3MmQSEjniF49M2Z
+      THINOS_FIRSTBOOT_20
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_21'
       +4qURpENd2Z0kePW5+POkjt4dfuRick5MW+omk4e6TcsBVSik8RlH+MRdXx4ZHxG4dIv+ytg0JpC
       UnqPJSQKyI9sSAFidSBs5+FYCch0ZmOvTEYTC9hoi8S5eH/Na7QgDcuwJ9r8hDRQEWx+g/hL6b62
       fWq9KMMKONijPlBE0CsGqX6Sxmgz+woSFOZzxOR2MOB5HGjz+RtIHO8gReZjiPmZOCbRYi1nhGl7
@@ -10833,9 +10860,6 @@ autoinstall:
       99jrXiCf5CIg3ALLCRTBtdRSeC/B+/nP/F937KXI9Yr/tZrlZO9q97/1f1P9w1cuVdyyGyL4P3nr
       lal3AMJZQIlste8AH5GsJVKsEKrC0vc3wURX9Aub5voYX1tIfPvn1saAKnyfe5sQZ6FFv7btd2uo
       hIZ+IV2IdKbpEUdSIjJ7C2Zxilkj8J91fGH0cpAguVdbdLKeLb2L+T+NQvU6qANrMQpqzEoUcM3l
-      THINOS_ARCMENU_ZIP_19
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_20'
       CWOvtQ9JPQEbSxN9Yohvd3YuoVjm2wp8OC5NsvPtAd7ey2wpLrODCtr+TkOdLbMXM5XsJ824f3Jr
       5kFkcZ+IT6jApzt9hDbi/amVJPZ1EKmwpiO91AQcaxJ8ZoxS/IQIzIekw9BDkJNOO8yHIM0ttQUp
       5o7ChNCg0fCYiYyHpeNA894wQGkoVG+BcGKsd+9MHa4LfLs0MOH6Xd6Ei3+rkux6tX0B8oiyd/9r
@@ -11070,6 +11094,9 @@ autoinstall:
       9l+2ymxMn5BGerdZWoTEsxdiap6WpLp0onrVkVcmA+PrUzQTKy8MmEtR5nmqPQjwK10orOJofyYy
       dPUiHyitH7tEadON2BkjpRrnVoL/XicJn623CP3poqNqf3f0VPtWCCy8LqKjR013rTMDc9/2AMSj
       Ir341qx8KxYqouMoQF5vxtGpa1Y7VtIU/NMeO+3Nbs2HThQ73TRaJ7KVUtQxH6tWC1LeIXLNuBdk
+      THINOS_FIRSTBOOT_21
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_22'
       H2xdLobmnNkZkRTwDAeyeiYJhYtUlRVkXipy4acLMdE+eqAkyV2ZCGTUoqhymIh+WVQpUkvYPadt
       ZzSOr9KMN6vgjcCdClvOy/b8AqCn7SAHXthxf5dje03I7+QyHS3EjVvTXspB9G6w2Oh30gS4tmmc
       yW9axKZua2B8O3mS4lqE+kqqny2vCPXsggYJMM9lhwNyixhxOSi2rc3mMCgFlDBm6PH5Sa+fhmJB
@@ -11355,9 +11382,6 @@ autoinstall:
       2qwiSh0rV2AKIcbqkSqy+Xp6qy+Cbdn3Pnlx0V6h+qGwpPtMpXwmQO/VNT5K4tzgvsGp4hlBY70Z
       zsMftQouOiU+V9RyupRqQt9N1xFBP6brAB4LTUBq8Gkvd2SKVt1RJwdCYygjafQ2PyuwCZGzXcL8
       GfApiZN3WNaew7yJ6uDZWqkepItJiQ+yzsBqMc6u5bagGGRweTh6oVP9bGxRVAv+6U9C1G1CbzqA
-      THINOS_ARCMENU_ZIP_20
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_21'
       z1BPp8pOP0D21WczuZrIfXHph/L3KTtI/XNDq+LfxL3yy6WSNsf7JbKYSIsxWlCNuEYjRSQUZqPj
       ilgZ7I7V9N8wlQv3jUIUs0bfSzM1Ue76zBWQbaRTwwDAMFyeQN1/yIIBoy8kNVWL0hx2lQZGmva2
       TGbM9r+YL2x1P1DW8aTwahf/3N52LNR8HpBQSiHy2CYo6T21E/lUGGPgYUu8iXGn1nlT02cm5xU1
@@ -11592,6 +11616,9 @@ autoinstall:
       Klv+lpFqPeYpw1TwqrFiy3E775lv5s3jG+K4m8fanv/WnpITta/qaWT7B8vqbZ7atsMsLTh3xuNc
       yz7odX7CbJwkj/qddPzxHSBR5OZEiRwBA77IKOEHL9gvz5cReJbs7TYc0NHxZ1PNmA5wWNHDZzlJ
       eXox5R7u5oLq6i9ilM4SaMSc+dd/Xt4Fr7STE/y012n11ymvhgaCqXWgbzn5eFvoqPzsBQ94unuR
+      THINOS_FIRSTBOOT_22
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_23'
       D9kxDi7/sSuCHzveRjFGV6NhC/5mcASdhhFeUoFFYV1+fwrquk/vF+MiSyednt2Zpv8DnV3YaX1v
       UpqOkVY7yhLb9j0XJsxINQizq+a+KHRLlk1BTPsc+dd/WVZ7AftwS/B++SD4+dUrk2c6enkhLM7T
       Y4gpukEwCjtX5X0QB0k6nRLMZoo4sNP1UHYKxsx3K7kx4kLWHE6DuX+tjS+HulnVMq6Wve2H1lKw
@@ -11877,9 +11904,6 @@ autoinstall:
       AHNldHRpbmdzL21lbnVTZXR0aW5ncy9sYXlvdXRUd2Vha3NQYWdlLmpzUEsBAh4DFAAAAAgANBq/
       XEK53k1dDQAA1TwAACYAAAAAAAAAAQAAAKSBp6IFAHNldHRpbmdzL21lbnVTZXR0aW5ncy90aGVt
       aW5nRGlhbG9nLmpzUEsBAh4DFAAAAAgANBq/XIs/zETxCgAA+z0AACcAAAAAAAAAAQAAAKSBSLAF
-      THINOS_ARCMENU_ZIP_21
-    - |
-      base64 -d >> /target/tmp/arcmenu.zip <<'THINOS_ARCMENU_ZIP_22'
       AHNldHRpbmdzL21lbnVTZXR0aW5ncy92aXN1YWxTZXR0aW5ncy5qc1BLAQIeAxQAAAAIADQav1wt
       VJquVwUAAGwSAAAmAAAAAAAAAAEAAACkgX67BQBzZXR0aW5ncy9tZW51U2V0dGluZ3MvbGlzdE90
       aGVyUGFnZS5qc1BLAQIeAxQAAAAIADQav1weGextHAQAAHYMAAAgAAAAAAAAAAEAAACkgRnBBQBz
@@ -11909,23 +11933,21 @@ autoinstall:
       FAAAAAgANBq/XNaQvLSJFgAA0nIAAAkAAAAAAAAAAQAAAKSB4C0JAHNlYXJjaC5qc1BLAQIeAxQA
       AAAIADQav1zaAU7jjwsAAEsnAAAMAAAAAAAAAAEAAACkgZBECQBjb25zdGFudHMuanNQSwUGAAAA
       ALgAuACnMAAASVAJAAAA
-      THINOS_ARCMENU_ZIP_22
-    - |
-      chroot /target unzip -oq /tmp/arcmenu.zip -d /home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com
-      rm -f /target/tmp/arcmenu.zip
-      chroot /target glib-compile-schemas /home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com/schemas
-      chroot /target chown -R vdi:vdi /home/vdi/.local
+      THINOS_ARCMENU_ZIP
+      unzip -oq /tmp/arcmenu.zip -d /home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com
+      rm -f /tmp/arcmenu.zip
+      glib-compile-schemas /home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com/schemas
+      chown -R vdi:vdi /home/vdi/.local
 
-    # Enabling the extension and setting its own (not the regular
-    # gsettings-visible) schema both need to happen with a real dconf/
-    # D-Bus session up, which late-commands/chroot does not have - an
-    # XDG autostart entry runs this once vdi actually logs in instead.
-    # --schemadir is required for the arcmenu-specific keys: an
-    # extension's schema, compiled only into its own extension
-    # directory, is invisible to plain gsettings.
-    - |
-      mkdir -p /target/etc/xdg/autostart
-      cat > /target/usr/local/sbin/thinos-arcmenu-setup <<'EOF'
+      # Enabling the extension and setting its own (not the regular
+      # gsettings-visible) schema both need a real dconf/D-Bus session, which
+      # this firstboot service does not have (it runs before the graphical
+      # session even starts) - an XDG autostart entry runs this once vdi
+      # actually logs in instead. --schemadir is required for the
+      # arcmenu-specific keys: an extension's schema, compiled only into its
+      # own extension directory, is invisible to plain gsettings.
+      mkdir -p /etc/xdg/autostart
+      cat > /usr/local/sbin/thinos-arcmenu-setup <<'EOF'
       #!/bin/bash
       set -u
       ARCMENU_SCHEMAS=/home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com/schemas
@@ -11936,8 +11958,8 @@ autoinstall:
           gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-layout-extra-shortcuts "[]" || true
       fi
       EOF
-      chmod 755 /target/usr/local/sbin/thinos-arcmenu-setup
-      cat > /target/etc/xdg/autostart/thinos-arcmenu-setup.desktop <<'EOF'
+      chmod 755 /usr/local/sbin/thinos-arcmenu-setup
+      cat > /etc/xdg/autostart/thinos-arcmenu-setup.desktop <<'EOF'
       [Desktop Entry]
       Type=Application
       Name=ThinOS ArcMenu Setup
@@ -11945,5 +11967,166 @@ autoinstall:
       NoDisplay=true
       X-GNOME-Autostart-Phase=Application
       EOF
+
+      # Self-update: re-fetches ThinOS-v3.yaml, extracts this same script from
+      # it (a commit-pinned-then-branch-fallback fetch, same reasoning as
+      # ThinOS-v2.yaml's thinclient-update: raw.githubusercontent.com can serve
+      # a stale branch-URL response right after a push, but a URL pinned to an
+      # exact commit SHA does not; the API is used first to resolve that SHA,
+      # falling back to the branch URL only if the API call itself fails, e.g.
+      # unauthenticated rate limiting), strips the early-exit MARKER check
+      # (everything else here, including the wallpaper/ArcMenu writes, is
+      # already safe to redo - dconf/unzip/glib-compile-schemas all just
+      # overwrite), and re-runs it.
+      cat > /usr/local/sbin/thinos-update <<'THINOS_UPDATE_EOF'
+      #!/bin/bash
+      set -uo pipefail
+
+      REPO="hasanaltin/ThinOS"
+      FILE="ThinOS-v3.yaml"
+      VERSION_FILE="/var/lib/thinos/version"
+      LOG="/var/log/thinos-update.log"
+
+      mkdir -p /var/lib/thinos
+      exec > >(tee -a "$LOG") 2>&1
+      echo
+      echo "=== ThinOS v3 Update: $(date -Is) ==="
+
+      STATUS=0
+
+      echo
+      echo "--- Ubuntu system updates ---"
+      if apt-get update; then
+          apt-get -y full-upgrade
+          apt-get -y autoremove --purge
+      else
+          echo "Failed to refresh the package index; skipping system upgrade." >&2
+          STATUS=1
+      fi
+
+      echo
+      echo "--- ThinOS appliance updates ---"
+      WORKDIR=$(mktemp -d)
+      trap 'rm -rf "$WORKDIR"' EXIT
+
+      REMOTE_SHA=$(
+          curl -fsSL --connect-timeout 15 --max-time 30 \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$REPO/commits/master" 2>/dev/null \
+          | python3 -c 'import json,sys
+      try:
+          print(json.load(sys.stdin).get("sha",""))
+      except Exception:
+          pass' 2>/dev/null \
+          || true
+      )
+
+      DOWNLOADED=0
+
+      if [ -n "$REMOTE_SHA" ] && curl -fsSL --connect-timeout 15 --max-time 60 \
+              -o "$WORKDIR/$FILE" \
+              "https://raw.githubusercontent.com/$REPO/$REMOTE_SHA/$FILE"; then
+          DOWNLOADED=1
+      else
+          echo "Could not resolve an exact commit via the GitHub API (it may be rate-limited); falling back to the master branch URL." >&2
+          if curl -fsSL --connect-timeout 15 --max-time 60 \
+                  -o "$WORKDIR/$FILE" \
+                  "https://raw.githubusercontent.com/$REPO/master/$FILE"; then
+              DOWNLOADED=1
+          fi
+      fi
+
+      if [ "$DOWNLOADED" -ne 1 ]; then
+          echo "Could not download $FILE from GitHub by any method; skipping ThinOS update." >&2
+          STATUS=1
+      else
+          REMOTE_KEY=$(sha256sum "$WORKDIR/$FILE" | awk '{print $1}')
+          LOCAL_KEY=$(cat "$VERSION_FILE" 2>/dev/null || true)
+
+          if [ "$REMOTE_KEY" = "$LOCAL_KEY" ]; then
+              echo "ThinOS is already up to date ($REMOTE_KEY)."
+          else
+              echo "Newer ThinOS configuration found ($REMOTE_KEY). Applying..."
+
+              python3 - "$WORKDIR/$FILE" > "$WORKDIR/provision.sh" <<'PY'
+      import re
+      import sys
+
+      lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+      opener_re = re.compile(
+          r"^\s*cat (>>?) /target/usr/local/sbin/thinos-firstboot <<-?'?(\w+)'?\s*$"
+      )
+
+      assembled = []
+      i = 0
+      while i < len(lines):
+          m = opener_re.match(lines[i])
+          if m:
+              op, delim = m.group(1), m.group(2)
+              j = i + 1
+              while j < len(lines) and lines[j].strip() != delim:
+                  j += 1
+              body = lines[i + 1:j]
+              assembled = body if op == ">" else assembled + body
+              i = j + 1
+              continue
+          i += 1
+
+      print("\n".join(l[6:] if l.startswith("      ") else l for l in assembled))
+      PY
+
+              if [ ! -s "$WORKDIR/provision.sh" ]; then
+                  echo "Could not find thinos-firstboot inside the downloaded $FILE." >&2
+                  STATUS=1
+              else
+                  sed -i '/^if \[ -e "\$MARKER" \]; then$/,/^fi$/d' "$WORKDIR/provision.sh"
+                  chmod 755 "$WORKDIR/provision.sh"
+
+                  if bash "$WORKDIR/provision.sh"; then
+                      echo "$REMOTE_KEY" > "$VERSION_FILE"
+                      echo "ThinOS files updated. Reboot to apply."
+                  else
+                      echo "ThinOS update failed; see $LOG for details." >&2
+                      STATUS=1
+                  fi
+              fi
+          fi
+      fi
+
+      echo
+      echo "=== Update check complete ==="
+      echo
+      read -rp "Press Enter to close..." || true
+      exit "$STATUS"
+      THINOS_UPDATE_EOF
+      chmod 755 /usr/local/sbin/thinos-update
+
+      rm -f "$FAILED"
+      touch "$MARKER"
+      echo
+      echo "=== ThinOS v3 first boot complete ==="
+      THINOS_FIRSTBOOT_23
+    - |
+      chmod 755 /target/usr/local/sbin/thinos-firstboot
+
+    - |
+      cat > /target/etc/systemd/system/thinos-firstboot.service <<'EOF'
+      [Unit]
+      Description=ThinOS First Boot Provisioning
+      Wants=network-online.target
+      After=network-online.target
+      Before=graphical.target
+      ConditionPathExists=!/var/lib/thinos/configured
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/thinos-firstboot
+      RemainAfterExit=no
+      TimeoutStartSec=20min
+
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      chroot /target systemctl enable thinos-firstboot.service
 
   shutdown: reboot
