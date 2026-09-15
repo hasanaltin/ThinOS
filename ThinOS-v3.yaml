@@ -19605,6 +19605,11 @@ autoinstall:
       DASHTOPANEL_SCHEMAS=/home/vdi/.local/share/gnome-shell/extensions/dash-to-panel@jderose9.github.com/schemas
       runuser -u vdi -- gsettings set org.gnome.shell enabled-extensions "['arcmenu@arcmenu.com', 'dash-to-panel@jderose9.github.com']" || true
       runuser -u vdi -- gsettings set org.gnome.shell favorite-apps "[]" || true
+      # This is an always-autologin appliance; a lock screen only prompts for
+      # a password nobody at the physical console is expected to know, so
+      # waking from suspend must not require one.
+      runuser -u vdi -- gsettings set org.gnome.desktop.screensaver lock-enabled false || true
+      runuser -u vdi -- gsettings set org.gnome.desktop.lockdown disable-lock-screen true || true
       if [ -f "$ARCMENU_SCHEMAS/gschemas.compiled" ]; then
           runuser -u vdi -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
           runuser -u vdi -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu search-hidden true || true
