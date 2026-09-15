@@ -159,7 +159,8 @@ autoinstall:
           gnome-terminal gnome-text-editor gnome-system-monitor gnome-logs gnome-screenshot update-manager \
           x11-xserver-utils x11-utils xinput dbus-x11 dconf-cli \
           xdg-user-dirs curl ca-certificates openssh-server \
-          meson ninja-build sassc
+          meson ninja-build sassc \
+          papirus-icon-theme
 
       # Installing LightDM must not take away the working Ubuntu recovery GUI
       # until every appliance component has passed validation.
@@ -211,12 +212,15 @@ autoinstall:
       # read after and overrides it - which "gsettings set
       # org.gnome.desktop.interface gtk-theme" alone does not, since that
       # settings.ini value wins over the GSettings-bound default regardless
-      # of what dconf holds. Keeping Yaru for icons since Stiloetto-V2 does
-      # not ship its own icon theme.
+      # of what dconf holds. Using Papirus for icons since Stiloetto-V2 does
+      # not ship its own icon theme - installed via apt (papirus-icon-theme)
+      # rather than vendored like the GTK theme, since it is an actively
+      # maintained package already built for Ubuntu, unlike the unmaintained
+      # upstream Stiloetto is forked from.
       cat > /home/kiosk/.config/gtk-3.0/settings.ini <<'EOF'
       [Settings]
       gtk-theme-name = Stiloetto-V2
-      gtk-icon-theme-name = Yaru
+      gtk-icon-theme-name = Papirus
       EOF
 
       # Enterprise-style wallpaper shipped with the appliance. It is a simple
