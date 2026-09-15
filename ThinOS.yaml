@@ -1270,10 +1270,13 @@ autoinstall:
               )
 
           def do_activate(self):
-              Adw.StyleManager.get_default().set_color_scheme(
-                  Adw.ColorScheme.FORCE_LIGHT
-              )
-
+              # Adw.StyleManager.set_color_scheme() removed as a test: xev
+              # showed this window's the only kind that continuously
+              # unmaps/remaps itself, and this call - which every affected
+              # app makes and no GTK3 app in this appliance does - is the
+              # one thing left untried after GSK_RENDERER and GDK_DEBUG
+              # didn't stop it. Without it the app follows the system
+              # default, which has looked light regardless in practice.
               win = Adw.ApplicationWindow(application=self)
               win.set_title("System Information")
               win.set_default_size(760, 650)
@@ -1573,10 +1576,7 @@ autoinstall:
               self.window_title = None
 
           def do_activate(self):
-              Adw.StyleManager.get_default().set_color_scheme(
-                  Adw.ColorScheme.FORCE_LIGHT
-              )
-
+              # See thinclient-system-info for why this call was removed.
               self.window = Adw.ApplicationWindow(
                   application=self
               )
@@ -2528,10 +2528,7 @@ autoinstall:
               self.unlock_button = None
 
           def do_activate(self):
-              Adw.StyleManager.get_default().set_color_scheme(
-                  Adw.ColorScheme.FORCE_LIGHT
-              )
-
+              # See thinclient-system-info for why this call was removed.
               self.window = Adw.ApplicationWindow(
                   application=self
               )
