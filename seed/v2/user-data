@@ -21846,16 +21846,29 @@ autoinstall:
           gsettings set org.gnome.shell favorite-apps "['thinclient-citrix.desktop', 'thinclient-rdp.desktop', 'thinclient-horizon.desktop', 'nemo.desktop', 'thinclient-system-info.desktop', 'thinclient-control-panel.desktop', 'thinclient-admin-mode.desktop']" || true
       fi
 
+      # Extension-bundled schemas (anything under an extension's own
+      # .local/share/gnome-shell/extensions/<uuid>/schemas/) are invisible
+      # to plain gsettings - only the extension's own code can find them,
+      # via a schema source it builds pointing at its own directory. Every
+      # "gsettings set org.gnome.shell.extensions.*" call below silently
+      # did nothing before this fix: they were all guarded by
+      # "gsettings list-schemas | grep -qx ..." checks that plain
+      # list-schemas can never satisfy for these two, so the guard always
+      # failed and skipped the whole block. "--schemadir" points gsettings
+      # at the compiled schema directly instead.
+      ARCMENU_SCHEMAS=/home/kiosk/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com/schemas
+      D2P_SCHEMAS=/home/kiosk/.local/share/gnome-shell/extensions/dash-to-panel@jderose9.github.com/schemas
+
       # Dash to Panel's own "Show Applications" button opens GNOME Shell's
       # full-screen app grid (reported as a "metro menu" - not what a
       # taskbar Start Menu should do), so ArcMenu takes over that role
       # instead: same pinned apps as the taskbar, "windows" layout for a
       # compact popup anchored to its own taskbar button rather than a
       # full-screen overview.
-      if gsettings list-schemas | grep -qx 'org.gnome.shell.extensions.arcmenu'; then
-          gsettings set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
-          gsettings set org.gnome.shell.extensions.arcmenu windows-show-frequent-apps false || true
-          gsettings set org.gnome.shell.extensions.arcmenu pinned-apps "[{'id': 'thinclient-citrix.desktop'}, {'id': 'thinclient-rdp.desktop'}, {'id': 'thinclient-horizon.desktop'}, {'id': 'nemo.desktop'}, {'id': 'thinclient-system-info.desktop'}, {'id': 'thinclient-control-panel.desktop'}, {'id': 'thinclient-admin-mode.desktop'}]" || true
+      if [ -f "$ARCMENU_SCHEMAS/gschemas.compiled" ]; then
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-show-frequent-apps false || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu pinned-apps "[{'id': 'thinclient-citrix.desktop'}, {'id': 'thinclient-rdp.desktop'}, {'id': 'thinclient-horizon.desktop'}, {'id': 'nemo.desktop'}, {'id': 'thinclient-system-info.desktop'}, {'id': 'thinclient-control-panel.desktop'}, {'id': 'thinclient-admin-mode.desktop'}]" || true
       fi
 
       # Activities is reachable several ways in stock GNOME Shell plus Dash
@@ -21863,14 +21876,14 @@ autoinstall:
       # and Dash to Panel's own "Show Applications" button - so all of them
       # are turned off/hidden here, not just one, to actually keep users on
       # the pinned taskbar icons and ArcMenu rather than the full app grid.
-      # The "Show Applications" hide is a best-effort attempt at Dash to
-      # Panel's per-monitor panel-element-positions JSON (keyed "0" for the
-      # primary monitor, matching its own documented defaults otherwise) -
-      # unlike a wrong value elsewhere, getting this key wrong just leaves
-      # the button visible, so it is safe to try without live verification.
-      if gsettings list-schemas | grep -qx 'org.gnome.shell.extensions.dash-to-panel'; then
-          gsettings set org.gnome.shell.extensions.dash-to-panel show-activities-button false || true
-          gsettings set org.gnome.shell.extensions.dash-to-panel panel-element-positions '{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":true,"position":"stackedBR"}]}' || true
+      # The "Show Applications" hide is Dash to Panel's per-monitor
+      # panel-element-positions JSON (keyed "0" for the primary monitor,
+      # matching its own documented defaults otherwise, per
+      # getMonitorSetting()'s fallback to a plain numeric-index key in its
+      # own source).
+      if [ -f "$D2P_SCHEMAS/gschemas.compiled" ]; then
+          gsettings --schemadir "$D2P_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel show-activities-button false || true
+          gsettings --schemadir "$D2P_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel panel-element-positions '{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":true,"position":"stackedBR"}]}' || true
       fi
       if gsettings list-schemas | grep -qx 'org.gnome.desktop.interface'; then
           gsettings set org.gnome.desktop.interface enable-hot-corners false || true
