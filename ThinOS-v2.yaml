@@ -109,7 +109,7 @@ autoinstall:
 
     # Install the full thin-client provisioning script into the target.
     - |
-      cat > /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT'
+      cat > /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT_1'
       #!/bin/bash
       set -euo pipefail
       export DEBIAN_FRONTEND=noninteractive
@@ -916,6 +916,9 @@ autoinstall:
               if data.get("username"): args.append(f"/u:{data['username']}")
               if data.get("domain"): args.append(f"/d:{data['domain']}")
               if data.get("network"): args.append(f"/network:{data['network']}")
+      THINCLIENT_FIRSTBOOT_1
+    - |
+      cat >> /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT_2'
               if data.get("scale"): args.append(f"/scale:{data['scale']}")
               if data.get("fullscreen", True): args.append("/f")
               if data.get("multimon", False): args.append("/multimon")
@@ -1722,6 +1725,9 @@ autoinstall:
               resolution = ""
 
               match = re.search(r"(\d+x\d+)\+\d+\+\d+", line)
+      THINCLIENT_FIRSTBOOT_2
+    - |
+      cat >> /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT_3'
               if match:
                   resolution = match.group(1)
 
@@ -2528,6 +2534,9 @@ autoinstall:
                       "changes-prevent-symbolic"
                   )
 
+      THINCLIENT_FIRSTBOOT_3
+    - |
+      cat >> /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT_4'
                   button = Gtk.Button(label="Unlock Administrator Mode")
                   button.get_style_context().add_class("suggested-action")
 
@@ -3334,6 +3343,9 @@ autoinstall:
               subprocess.Popen(
                   shlex.split(command_line),
                   start_new_session=True
+      THINCLIENT_FIRSTBOOT_4
+    - |
+      cat >> /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT_5'
               )
           except Exception:
               pass
@@ -4140,6 +4152,9 @@ autoinstall:
                   icon = Gtk.Image.new_from_icon_name(
                       icon_name,
                       Gtk.IconSize.MENU
+      THINCLIENT_FIRSTBOOT_5
+    - |
+      cat >> /target/usr/local/sbin/thinclient-firstboot <<'THINCLIENT_FIRSTBOOT_6'
                   )
 
                   item.set_image(icon)
@@ -4946,7 +4961,8 @@ autoinstall:
       # A clean reboot avoids changing display-manager implementations in the
       # middle of the first boot. The next boot goes straight to kiosk LightDM.
       systemctl --no-block reboot || true
-      THINCLIENT_FIRSTBOOT
+      THINCLIENT_FIRSTBOOT_6
+    - |
       chmod 755 /target/usr/local/sbin/thinclient-firstboot
 
     # Provision before the graphical display manager starts. Failure falls back to Ubuntu recovery GUI.
