@@ -344,6 +344,15 @@ autoinstall:
       export QT_AUTO_SCREEN_SCALE_FACTOR=0
       export QT_SCALE_FACTOR=1
 
+      # GTK4/libadwaita (Control Panel, System Information, Administrator
+      # Login) defaults to a GPU-accelerated renderer that expects a
+      # compositor for frame synchronization. Without one (see above),
+      # that showed up as visible flicker specific to these apps and to no
+      # GTK3 app - confirmed by reproducing it only with GTK4 windows open.
+      # Force GTK4's software (cairo) renderer instead: slower, but doesn't
+      # depend on GL sync a compositor-less X session can't provide.
+      export GSK_RENDERER=cairo
+
       xset s off >/dev/null 2>&1 || true
       xset -dpms >/dev/null 2>&1 || true
       xset s noblank >/dev/null 2>&1 || true
