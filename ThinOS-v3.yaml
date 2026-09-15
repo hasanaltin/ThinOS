@@ -11940,33 +11940,23 @@ autoinstall:
       chown -R vdi:vdi /home/vdi/.local
 
       # Enabling the extension and setting its own (not the regular
-      # gsettings-visible) schema both need a real dconf/D-Bus session, which
-      # this firstboot service does not have (it runs before the graphical
-      # session even starts) - an XDG autostart entry runs this once vdi
-      # actually logs in instead. --schemadir is required for the
-      # arcmenu-specific keys: an extension's schema, compiled only into its
-      # own extension directory, is invisible to plain gsettings.
-      mkdir -p /etc/xdg/autostart
-      cat > /usr/local/sbin/thinos-arcmenu-setup <<'EOF'
-      #!/bin/bash
-      set -u
+      # gsettings-visible) schema both need a real dconf write for vdi -
+      # "runuser -u vdi" gives gsettings a normal HOME/user context to write
+      # into even with no graphical session running yet (dconf's user-db
+      # backend does not require a live D-Bus session for this - it opens a
+      # private one just for the call), so this runs directly here instead of
+      # depending on an XDG autostart entry actually firing at the right point
+      # in the session's startup, which turned out not to happen reliably.
+      # --schemadir is required for the arcmenu-specific keys: an extension's
+      # schema, compiled only into its own extension directory, is invisible
+      # to plain gsettings.
       ARCMENU_SCHEMAS=/home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com/schemas
-      gsettings set org.gnome.shell enabled-extensions "['arcmenu@arcmenu.com']" || true
+      runuser -u vdi -- gsettings set org.gnome.shell enabled-extensions "['arcmenu@arcmenu.com']" || true
       if [ -f "$ARCMENU_SCHEMAS/gschemas.compiled" ]; then
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu search-hidden true || true
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-layout-extra-shortcuts "[]" || true
+          runuser -u vdi -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
+          runuser -u vdi -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu search-hidden true || true
+          runuser -u vdi -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-layout-extra-shortcuts "[]" || true
       fi
-      EOF
-      chmod 755 /usr/local/sbin/thinos-arcmenu-setup
-      cat > /etc/xdg/autostart/thinos-arcmenu-setup.desktop <<'EOF'
-      [Desktop Entry]
-      Type=Application
-      Name=ThinOS ArcMenu Setup
-      Exec=/usr/local/sbin/thinos-arcmenu-setup
-      NoDisplay=true
-      X-GNOME-Autostart-Phase=Application
-      EOF
 
       # Self-update: re-fetches ThinOS-v3.yaml, extracts this same script from
       # it (a commit-pinned-then-branch-fallback fetch, same reasoning as
