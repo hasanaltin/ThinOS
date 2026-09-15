@@ -942,6 +942,48 @@ autoinstall:
       picture-uri-dark='file:///usr/share/backgrounds/thinos-wallpaper.jpg'
       picture-options='zoom'
       EOF
+
+      # Written as a system-wide dconf default (like the background above)
+      # rather than "gsettings set" against vdi's own per-user database: pure
+      # file I/O plus "dconf update" recompiling it, with no D-Bus, no
+      # session, and no dependency on *when* first boot happens to run
+      # relative to GDM/the first graphical login - which is exactly what
+      # every per-user-write attempt here turned out to depend on despite
+      # several attempts to route around it (a plain gsettings write needs
+      # dconf's D-Bus service; a private, throwaway one raced against - or
+      # was silently overwritten by - the real session's own dconf-service,
+      # confirmed live more than once, even when only run once and even when
+      # a live session already existed). dconf doesn't care whether a schema
+      # is system-installed or bundled inside an extension's own directory -
+      # the schema only matters to whichever client (gnome-shell, gsettings)
+      # later reads the value through it - so ArcMenu's and Dash to Panel's
+      # own settings can be defaulted here too, at the dconf paths their
+      # gschema.xml files declare, before either extension is even unpacked
+      # below. This is also an always-autologin appliance, so a lock screen
+      # only prompts for a password nobody at the physical console is
+      # expected to know - waking from suspend must not require one.
+      cat > /etc/dconf/db/local.d/01-thinos-desktop <<'EOF'
+      [org/gnome/shell]
+      enabled-extensions=['arcmenu@arcmenu.com', 'dash-to-panel@jderose9.github.com']
+      favorite-apps=@as []
+
+      [org/gnome/desktop/screensaver]
+      lock-enabled=false
+
+      [org/gnome/desktop/lockdown]
+      disable-lock-screen=true
+
+      [org/gnome/shell/extensions/arcmenu]
+      menu-layout='windows'
+      search-hidden=true
+      windows-layout-extra-shortcuts=@as []
+      show-activities-button=false
+
+      [org/gnome/shell/extensions/dash-to-panel]
+      show-activities-button=false
+      stockgs-keep-top-panel=false
+      panel-element-positions='{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":true,"position":"stackedBR"}]}'
+      EOF
       dconf update
 
       # ArcMenu GNOME Shell extension (GPL-2.0, pinned to release 73, the build
@@ -1148,6 +1190,9 @@ autoinstall:
       Czd+5naoKEZVkrTara0JunGRCY63u39kSiTVpmDcwjyHpZSD7amzUC40d6VHQX65hxYi6oBYkQWg
       W+PqZKzoxJ8i6ry0G8hgdJy6VjRrw0bmPRjV+q804Dq5ZnC5Q2BP+zzcZjDKxOhBwzjfqkOwsuMl
       0aQAPm5eVpFvz1zHXIqc6w0lTdFQSURkp1wUCQNdA63/t8UM0CIpBEm5hvI/LqILfo1RSwdLKNFU
+      THINOS_FIRSTBOOT_2
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_3'
       aK/5ukEhlxMoF+q9O4+gCrqZKDCRVmxqxRjnjdFgeXT546vDf6KvJDrIvaK0QRioXTBDFMlwkJ2+
       5wG2VLBDL2BAaG4KBecqNSsWhm+z8/EiQniEFtUEQ//NTy5kVTt+Exhj0+FjQnoDX+wZoHwQjS76
       37LJxbPkWUrJI8O9v8jR+fQuzjahkpt6JwezGYqSvjnNquPGLdjZhu0DFLOKo4f5ghRfyrbdVq4r
@@ -1180,9 +1225,6 @@ autoinstall:
       98PplKhdPuv+4yMR71/eDfRd/zNJc/D71eBxqj/fDkbqAeQ/D4mfybSPD4Yj/Xk8nA5HH5kgBnHH
       w4+3U337cHc9GPO07ve0On+oH/vj6XAwUcTHp+F1d1Mn/QmxfaI/D6e3D0/TwDw21x89638OR9eJ
       HgyZ0OD3x/FgQvtXRHt4TxwP6OFwdHX3dM2DwJdEYfQwJTnRzojP6QOLxr/rqRMzRF/dD8Ykv9G0
-      THINOS_FIRSTBOOT_2
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_3'
       fzm8G9KSmBy+GU5HtATPF/eF86unuz5t4mn8+DAZoH4DERIREvh4OPmn7k+UE+xvT/1AiKRLNO77
       oys+qJ2DxHb188MTogbt++4aLyj/AgQ10NeDm8HVdPiJjpfepGUmT/cDJ+/JlAV0d6dHgyvitz9+
       1pPB+NPwCnJQ48Fjf0jix4z0eAwqDyPxLR96ODzSksEn6MDT6A67HQ9+e6L9HNAE0Oh/JG2DMKNz
@@ -1670,6 +1712,9 @@ autoinstall:
       Lu4mYtA18h063r1rRKeUdrjaL+c3PeuxRSs0qmSNlggTvCO+Vz6sGhSUyizPdLouuHougkkYoluU
       f4hlCLEjD76tD+45hlsvl2Mk6swQ8IQI4MErw3MxXy7nV18mQqsULvi7Z4NUA4RwYPJxDtswMwz2
       1F1g7fRBclw8vhJ+q7vzLAaaj+pS6bcALcXx5IANzu3iCcI4y9rbUOrvi4JWDaCxvoVU0DcJ9Bjw
+      THINOS_FIRSTBOOT_3
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_4'
       T7Y42ZB4egceN2R1NVDJWjSp70UF/2i0o4kcMA2bA6JcHwg4zWSUSwFN7ffQu38dCU+BiM3HhE5C
       o16s+2QQEyF5qg4kViQNsui3xgpiiHsGJ+4wy6HYjnnWA60kC/MErsufGllWXWHqgmMq2cit7ovT
       XvORHpE5T1qwRsWkuOSSeJaU9bAHk/UpbFCvAfB9RoABNk/P4eOfyKEZNr76yu63QtMjjZ+A12T6
@@ -1702,9 +1747,6 @@ autoinstall:
       cAaowX4Fdryc1TnfZ4WQ3xMQkKo+g9ZshZMlmff7pV1KV5jirBvrlAgWF7TR8c+aSSA0LmGqrKn4
       OcAJnlhe1K3dFaHLVd5VJbO5vJ2tv9W6attdXd92pYlZG1dLq73rencswDxMNEnKNq4GuhbBmOH5
       iSpTKeHe6ZGs5AZQyDnTwM0pWeAizss2yAFRnEBfl6+cuUgLEGifKNkN78FEd+vobqVhN7U+RLVj
-      THINOS_FIRSTBOOT_3
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_4'
       3AECz9qnP/CnCMbXVQD1aawu3ZjkuvPQGbQjOg39u9odXaDAx8nxcUN/07aaKmMd2MW7I2O6Wtec
       2yICoecJWu9/bCBWn9za5bKTvr1dnLv55u7NlOn+Tq7i0415pbX4XaQmEJUPyZrdE8gRscrBEBvr
       9lm3phqd5xuTEfXaPhMxyBsW4mwjnFyPbDNRMdssJVSB0T56EtCbB3x4umRx1S8+z8zMCqWh6Ktn
@@ -2192,6 +2234,9 @@ autoinstall:
       34GZWYbhdz/HSXyWJalEtchxRDSZwYIcXeWUtHfbQvwAi2ICuEn1q0CJrhjKIPIJcbjYHAYTEkeV
       snPzxIEPoVwG4g/6EYrnZmiNCWjpiKLq5htMem8Y0O0T9oMJOiuCPMm6VEhvQaeTuCdhIkWK5Lm+
       NEc/ISZp5F97+XWKDqqzdI/4+BKG3eP55KivrCIINGnjPWoxCLeIcuKR1A9wvD5w/qqCwd7ogXiU
+      THINOS_FIRSTBOOT_4
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_5'
       dy9KAnaQMpURB2DSFNPu29lyOTvxRuPT5Xg+PtIxRsU2rgg+f6nOZ8ll/aTruqZOdUH4qKcChujc
       h41xvi9xmG8OnL+93FeBqN57a1B8j+B/K7Kj1kANZQHj7nQ4Px5rm/BztE6ya4+h0FefjI8mP594
       k9Hs1FtMftXW+mlK7OvG/1rOhx4jV7f4twIHXyIcf2lEsTgZTqd1KFZMBWvWN65McRyj0KvfQP3G
@@ -2224,9 +2269,6 @@ autoinstall:
       7TiKhYZ91vkv+zYytE0u0EN2YkqEwZtxrHkVuY4DbwM8ZLU7N9YwcJYqN8zXui0jdSCIOc16S1lw
       AKPY0C0hDHfBQOA0myzVGoa+rpfV0FmVNyDISEbIPb5JRd61Mel6IYrQGsaBGXO6/iLuv3ad9C0v
       iMgWUstB0zWRRWK1N4n19zqSnj7u1JturSyM9C3kTcUkgU+lE/AMDvhabtAWibc6LNZCQiri7TpK
-      THINOS_FIRSTBOOT_4
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_5'
       Vn7ksj96LlvpnbOlum1tEL34B4SOHOhe7kOIkwgq3Jiy3kXNrX814Bhp6OS/QZz8ZDQKipWc/QvD
       1AVEx1oFt/KCp4SkrwXdAh/DbtJ6RagQqL2HPFmvo6YoLpL3C3/3Lo5m8XVP5pr0r8QooaKlkKiA
       9hs0lDHPOdVaJ7YmjJHeNXdqvuFjHhrIK8TWktb61Ed63WMpbtUlNI135HJJnnB/mp2MvcVoPh6f
@@ -2714,6 +2756,9 @@ autoinstall:
       2wlhZNr5IaYkVbVrw/tnjW2S8S2bkZXeUmXFQboov2geCJfNEAE9f9OaAGlquHiWGiTLM0koDzyn
       CyEiCG382YrqZ+Z6da6Ho/q0U/+WXKilCAWhrjwj6lNFBNNUSnLSMdykaJ4/atG8mzzB1IXOj/ig
       VxtwxZjbvzMamjKPddmfLhhq8x7mxUhth/I27WCyovaLzzHLe5LfLoj2J35ef71gzFqmc3661VqW
+      THINOS_FIRSTBOOT_5
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_6'
       /vSaeD610xyuo/aKLxUJgvxdw3hgSk0raz9qGNDHVBmsjx/F1CajWb6ZBw2oXt78D0ZJYp5mflM6
       1lEbGw9CCBFN2Qovp+kLqbxV2jAk+zKOrDZqJRtreGF+cZC8rtmM7ktCKnHlM4iZDGuhh/lMlJm8
       Z7hMoCV54NNUvSuXHvpyqa3gzCvzgl+BDxfyLMbneAk+0p9PDDjVPBxpehftEIWsnt+EUSz4te56
@@ -2746,9 +2791,6 @@ autoinstall:
       t+2n7brVThuvwK0Ur50cb+RklwAuB0rgaBfr43Tx/Pu7+LwPdrFffAZ4JfCrXWyfl+34r+3617v4
       HBd2s9yLuzmf7Ojm+TPdLPeubl7ndbPd4262R8W2H+nm8z/RzXye6Ga7Pt/N5/9BN/P+Eyv/lW4+
       75+7mec37Py2HvYz2cPr+nt435t7WM/dFmd6eL6yGPWwHp+w+JDFz9r1j1m5X+xhP1i18n/Uwzz9
-      THINOS_FIRSTBOOT_5
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_6'
       vIfj9y89rOf5vTze2ss89PTyvpf18vgNvXyOoV7m/5Cdv9jLfBngpcCPAN8FXOnlfU71Mj+v9PK5
       X7Pr/tHLfJzTZ+O2j/2gq8/eC32sx1Af7z9h5031sf/M9XGc3tvH8h07ftSOl/tY/gN9zMPDtv9J
       4NXA56zcHwMRpiKLMkzxKeq/e1F8Yf2QYswi+dEHBMunH+lxD8oVtk18vE2wPhrlgO0fIn8iHQVz
@@ -3236,6 +3278,9 @@ autoinstall:
       Wx3a6k22qf5Yu0igsfb/Ji0DdlGSFlOKkpCCu7S7xJ2S4COkpVDgzGGWydUxL0wmhW25pJWZ10gb
       tyR3SAcr2Y6Q3CUX7WFOOk3b0htlVoam+agkXTyLzUZJjz3CHdqdzZJekRuUpI9LKaycS/rsrBxh
       Did9RbfArQzRhWrTbXTTHsce4qY0OjPGFe64EJKkLY5JU9wqxnp5wXakkXJzImO0FnOukbaTNNbT
+      THINOS_FIRSTBOOT_6
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_7'
       bfTyklDJxgUmeZI2xBOnjXiTkYjThsZkY8PxeEM8HutirjTSuKmbZ9J2krSPCSxXZAaZQ1Msk2F5
       Qc8MM5E/74buemGdQ6GVK7IcN9KcDWPgio1jqjPVvqo0UR+Ptdl4MQuDbhSQIHG7k4U8E1YzNdHP
       5fLs5XSH0bSapwRluWO0W6adwUMladOAkDHiey99763vLfnelO+92fDf+d6MTnjie4u+9873puF6
@@ -3268,9 +3313,6 @@ autoinstall:
       3yfzKFdfHvX8wzzK92oe9/NuHuPxjfnUT3Y+18vP5znOzafcXoHBfK73YD71tDufch4XeCafenta
       +FyRef8s+Pfzqfef5FPeV/Kp9zcB8/W5ihwZBbT/qQWUO7+A9PkF5F9UwP2vELyigOv4CsTOCrj/
       rQXc76OASwGfEPxtGa+LlQxtv9Oot9xplO/z07jeqmlcf/007rdyGuUKAX4G9eKmaeS3ZzrPrVvg
-      THINOS_FIRSTBOOT_6
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_7'
       pemc97zgPxL4xnT636+n0w5unME6IHMG5Smdwfps+QyOf1Tox2eQ35OCX5rB+DQ8g+f4ssD/EPix
       meyfNJP12+KZpLsBUTqobwg8NpP2+dxM7uOXM7nOHwDnaz6zuN6yWZRz5SzO8wm9YxbHHxD6yVlc
       53np/7nAqMC3AT8P+JtZ3Ofi2fTPltk8r4Ozye/UbK7XO5vzfiT0f5/NeBwT+s1zSP+0wAyB0+ew
@@ -3758,6 +3800,9 @@ autoinstall:
       k6TDhyaZb/5Q5z3pEO3mRYfIx4sPEZ/OQ8RnyyHmtQcPcf1rDlE+btf57znEfT5+iHz+nLa/cYj8
       +bHO/63CtsPE54mHaeeff5h83nuY57nqMPG58TDP+brDXOdNh0nPdx2mPbgbcJPo7WHidcEU+dcx
       xXX2TpGOxxT62v+SKcrLa6dI19umuN9b9Pk7pniOe6cYH3xhivT4yhTxfkjn/2GKcvrHKe7/tCM8
+      THINOS_FIRSTBOOT_7
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_8'
       38ojxHvzEdrZ3iNczwG8ROTjCPd59RHGm3cd4fP/eoT6/0NtP/oo8X7OUdK/6yjXOXGU48WjfP7a
       o4r3UZ7r3qPky2eOqr4cpTz/4Cjp/chR4nfJMc5fdozn7DrG/jXH9B7tGP3G8DE+nz1Ge1w/Rnn7
       4DHKz5ljGpccI98fAISoWz86Rry2Hyedjx7n/MxxPl84rvckOn71ce573XHK3a3HSd8PHOe6nz3O
@@ -3790,9 +3835,6 @@ autoinstall:
       sF9zA+kadBp+iAfqrlMwHUNuOdRe0x53azWvnDf1g2418PyyVGecwM64btl2cjk319JTdUv+yXl9
       AfbN1uZ1huV0t1+2d3u1QScjjZMoimvuEmvJ4mCJjE/61UJQcbKuvThnLekpFu2eSgVDO8NaDcM9
       2Zpg191t9dgzYd61azNOuWDjKHbNt92TbrXhl127PuMbHIKwUvGr2N1eHFxiH/bDatRlz7jFSmAX
-      THINOS_FIRSTBOOT_7
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_8'
       XLeCMTvvgwCd9kDN9gK7Vg2LDdupVKpu1nNqgl5PBsSyuHtg1z3glXHtGQ+UKdvTVb9k91Szhq7e
       tF32a7Zz0vGKTqboyqEaZuNGUHNLnWaRk1hVDmZPeuWcX5c5g05Yzs4ko+jaAxpX2eMqQF+t4DYC
       Nr2a5wb2CGad9Ny61ZPLSbF7w6AGjMZncM6soJ1LxOZA4FbtPg8nq/lVPG0GuaipDkGODMmTVrQO
@@ -4280,6 +4322,9 @@ autoinstall:
       mw/Wc4cz3MPchaL0QHKrV9DTD9ewAhKZZpzM5NxhtIeeDWl3IXNYGR0l+JTm4IqepF+FBtPEC1Im
       x6+fr11J39k5tzj3EekFroX69IdRRzwdxOgm/RC9gUZMOO0XTEsOMUEmA+UH6jim3g7zNndjxc4q
       wvB+cHDgK998IVFow5cO4jfxChCH9vJwwvEQmQGkQGfZ94TDQFSMgBRXs/W8c8aNkBdQI72vsHqF
+      THINOS_FIRSTBOOT_8
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_9'
       6I2wGo3w/wZVvxIxs86KleYO6ye5qldcXmcozB02OXbsK54ElDXeZTbWvUkfmGbar0K2Zpawdmh6
       w5AgsagFWV4lPDAMX0rJ75TvFcXM09EVu2j+hEcMFEkTNiPX4IQ8WDZPqSbLG70zfYT6abaOImqp
       ZWjhJThql89eXqiIQgV4cFrLRltVMalwt5yxh9UwiQdTkfo8n5O5QZhA5gYac4cDM6OYxaJreLmE
@@ -4312,9 +4357,6 @@ autoinstall:
       tyI2UhU1RZNGnYYgCpLJ1UePRsWJEbhbIb347krIhKehq1FG5nUJ4kxkVjHhb/p2j5kdLonw59km
       eBfulDW8AuwF7/vQnvKeTxKlVTlpRwSOmcg2Et3GdKyYMrSMu8IoWo9DdRjFisE9irtFO4oUmgDc
       IKlqrlrpQcmX5CJIYAygYCY7PrJVSGJuBYlWFQYTl76f4amZ0o00dTaR8hrzr8Nj579fnON08r4o
-      THINOS_FIRSTBOOT_8
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_9'
       32+iD11FM4PVXslU4MtL5tooE6Gdb5j2FEwwZQ8MV3nzA0bXKJAs+5TZSCSB0dLaX6UJokam58m+
       NvzPYsYriWaJ2cMkXugLiafgBtiB8cKPjA1i45CE+IPzROkZp6DOnWmpiidlx2Xl8CNmS3IQomeg
       ysvqt7iJyUvQiUxn5LHWZLfC5Jp7mPJrU5GbppzE6JjdJ5GcJGDbrC1TWAVnVi47JpSCkMT/4aZK
@@ -4802,6 +4844,9 @@ autoinstall:
       adJHmrxcZXBl1vUR6slwBfVWSS9EIEYWQa0RxlFxtFaGay7dcbDPwPWEmI0gyXs60xp40d5EnNTa
       vJ7YmkIFJXlLyKKtogFjPCjxRRYmZfjjEFlauHZKGp1V5FUEIh7jPbAwWEW+iBxSJlZvHBs5z0Tz
       QrGqo1ZGVTFa3QjpfTxzjTtpSOQte7MaspxiNakT273VcYqCubXWTygO1if0HjdsBSjkpWjYiagl
+      THINOS_FIRSTBOOT_9
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_10'
       S8ohb0JGmBDnt+1Y2lCkxCsyMvYs3HOdBCt0e5TFgTgMdaGmcMXReCrNMUo5iTNNa2k6GWNXLMNn
       PSqJTguxIuaW1UmXqtUGPWDUcrHGjZDBkqEU//OCLDxxS3lbZmv2GreRRHFNtDZJJsyRlJdRkRST
       RAPGwQiEcR0Z4ZQ00+160ZoSa8ikyn+eJMsn6Uhxz5OwfC2Ha2sSjE6i0VmP57WReITCI9VobWSH
@@ -4834,9 +4879,6 @@ autoinstall:
       66uc5c2cKOGcz4ZIa6Qt4sxrlbDcXdSYzpQ3uguoTbwxQ8udsho30lJFhjeRbIySuZo3IY4YfqJX
       p8ppjoxZu3rtcg/zqeUVY+SSJk4jkxRVOUztKeTgo7Rgr2siJXHT8zfVrCib7dVjDEkYy5bH6xIc
       Klc5s2uj6TEXlyGTI1HfkOAMszOtfM4YMa6+bLgzN9w56Ax39g13Zoc7dw93Hhru3I/S4c7jw529
-      THINOS_FIRSTBOOT_9
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_10'
       w53dw509VEKV9sqHXtOoV7ajhyFZpU++ptb9w527qD9sfg93DuhyqrnHNB6SpfntqWWOWnqo7Zao
       9ckegKOqZZDol2OYF1lf815rnEPFewwbfaTue2TxgKRXTk16uLNLdgxi0c1B8+KYfMaUs0AALzCO
       IUefxYnwGiBY1rzISX4NopRbYF+/TNK8W+hZo3KPrM9YOtj3V9v9sgPUOqRx7Hf05HrkRI/KiQ2x
@@ -5324,6 +5366,9 @@ autoinstall:
       HP7u8JF3MKVeOvDzRLol2zHiQdWbx1R41pfUTYgc9hb0hr/uAun7ipMcPfxzFXGnhYfXq4XaEdUO
       XYOoQTvjvD20XaAEj4eO+vkUf/d0Ztu/YCfERZBl++m2AuVKr476Ixzs9VB3BXni3UX55EgSOcJY
       rO0bHMsiTy/UP+T08ZikKwhH1OY+zeWgIXAtI8pIuH6f5iv6KJ4q0YWkcVEGOexr6cFnH3MeRXFr
+      THINOS_FIRSTBOOT_10
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_11'
       KNjvYRhLxtQANhwPWdgwoKqUDS/Ry3egi4OsruPf9dF0+32KYq+uoCh42q4MAcKyF30R/4BUTyBF
       BW3QYfYGRwCFo3U/d6VJHbhRIrAbeFjqO8+MH/rU+dkaeEV9bpChO95pc8njv39smpM5dXs0EKCe
       kDtIh4FLprMXCHfgMj0YcHHXcS9YFalUvyPDtbDupsYsinHke82K7AhtGbO5faHRHhl4QiYk3ITX
@@ -5356,9 +5401,6 @@ autoinstall:
       KIrqD6NnQK3sDV15LmUjE/PtURUv5UYvgIa7mWANukp5srZ8ccysMNxy4y0caY3faFrk8mctmOc6
       xQeGrthBr+cWQFbI/Heaq3Q2NmEsqncvxBNWPGwc90vZEmUxNI6eSM2QbAQbtyxIPJKQ/Bvg9cHA
       Fzl8GmqCN0XKv0bxpGbyijStAdvBpEeKZ7lA4Xh9hgbnWllbmrcfsIc79gHfmcU2vQkEDMTmTQPh
-      THINOS_FIRSTBOOT_10
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_11'
       z5JOKB0Qt3mzN1FdWGGKpXf7W5VRFWDpyRcTeLX5dwNDkKDlpwjLd9jLpR72BWzVWTB9N2LBkA+4
       KOWfDAFIIgUZ0jOG2XJGshCgh/ofBhzWbxdBKaOOEm5b8LrUNSunZNp2vQqFUtrVGZGqnA37Qny9
       dvM5xCZpvOoR6ilQjOOeCh22iDodJB3jPZLdTJj45xJGC1XvtIJVd1npsOrMWxh6RJkp1Rr3JiVr
@@ -5846,6 +5888,9 @@ autoinstall:
       gjaOu1Trq9vIx5Y24tPRRj7ubuM+Q23Un0NtxGtM269p47qTbaQr0nVv0v5bdL3fbiNdp9pIzwOA
       ewHntX5uO+etAGwQfW8nPw60E3+/nfhd1851Z9qJxw3tlPPNOu7d7cTzfTr+bl33XsA3II/7SDvz
       jk0dtKsjHRr/Ooj/zR3U7zs7qAcf6aB//nwH5327g37g7E7K88WAI8LPTuJ9TafS38l1bukkXu/r
+      THINOS_FIRSTBOOT_11
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_12'
       pF/6ECBQMI92ct1/6eS+520A7YBrALcD9m5QP7aB+75rA+PexwF7Ab+xgfJ1NnL+1o2Uw4GNzAuO
       Ae4GPLmR63wc8ArAr27kvLM3kX+XbSJ+zVrvBHRF7oBjgO/V/n8GRIg3/7WJeK/YTDvdtlntfzPl
       Ow0IFpnZzdSfD26mXZxWOL+Z9vzYZsrxO1r/gdaf3Uw6XrCF6563hfpx8RbqafMW9m/YQv7u3kJ7
@@ -5878,9 +5923,6 @@ autoinstall:
       7VegfAHfLwL8vzka5UxxBuW41iXn34Pyx7kx4vclZsj9w+tRnkJZi3XuFJwAfxnlV1DkYWKLzjlf
       4RzKpehrQXkLvr+p7T9DCVA+iPKI4ZlS/kZRXoKxL1daJJauy9F1tsL/h/J7KO3o+zngK3SMxNhN
       OmYa5eso39D63Sivy9H1KZSHcvW3obwd5SuG7yvyJ7nsbxnG8k+gfFvH/oHCTcsYBy7W+jUK34ey
-      THINOS_FIRSTBOOT_11
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_12'
       Std4GOVz2n69YV4ifzcqfC/KuH6HCv8M5ZMov6RrvBHFR3mX9v8qynf1W+LtBoz7EeATKP8gjQ1F
       p9+bdGulqjM+7ZU956hbqnmmIXaG3bmwhtZZzz0eS8OIF9S01dan3diZ8LzAcYtFr1jXEnnlcGZB
       W+yVvEJ1QWMtSJsbG+JGJwycY2F0PK64Bc9pKJrOTtMzgQ1NT6Hqh0HszPqlEqY60z42DZzJKCw7
@@ -6368,6 +6410,9 @@ autoinstall:
       m0JReHSN1CuAqmWVYNhBmIEsNWu1Y8bm9/JUQsC5VVNhWrILax1zO7dZrrwg4gKmrmlnNEeu7rQX
       kzTMFugc/d0x4l3HSRZSkL6OEARmItYKIYbIepeZ1lYmVPJsGjd4Vey9NXeFEgve3Y5Fcy1ZnEU+
       UTzghgsW7tWR1ZX2aG7Qb2bbBpNGrXL28dewNibVxhHUfT+LHgkkcw69CXnXQIi2xbYApNdDVY1Z
+      THINOS_FIRSTBOOT_12
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_13'
       QFuyZBFlUfaM6BzsJEgpnR66nCMcM4KDZ1SW0S7iD9ESzSlDE+hdAhzTtES7dyAWNePXpXwbEtGb
       N+h4I+yC1werevTti1fNzRZmS8ahXSI7Y3sfHNTGbgK3Usgsh/NBEdrDyfZfUidJRINaGiU3HpYS
       wTJTidqe6Ce0LVeLMktK2Aosw46RhFfiKC3DHKV+nAeEu+sO35vc3UAvfqUo1dnHu7CP1bNAZLdW
@@ -6400,9 +6445,6 @@ autoinstall:
       cEwfuXoF46cfMzakyX0ADJ6QWegxRp44Id6fZLM0Tpy6bMN/6TJg7lggoT4Mmnsho8d2v8U6wAAG
       UNzTthKsyL4FX6DrTzPWlbT701/pLAVoWOouCmJ3uA+Jt/7HUHxxzBlqcGR1A7lQRhwBkvaMuyCU
       zIHmCAZzExyjxgVb+TDOV7IptOzj1hWKszDXYNWsWtooWlJvtfrxDryG9mGKqA22JTMvnS2JQ5Mk
-      THINOS_FIRSTBOOT_12
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_13'
       TuoVzKG0cUhdWN3ORE1SF6FJs6AEaSxzLwipf0S+eeJIt5NDWCsYBuct/2ZO7TyLuCqA9hUoWRFH
       s4MRu8AuYpYWQQQP8QNYUc+XlgFzgC18/hxsAPlGmzV1h90hrnGYgOpFWWsQCY7k+oj0U+gtmHvV
       v+o2LLkspTUKcjQMhqXeJMs+hSUWb6z1FcyJY4lRnEElUxblUtnwtsqLKomyMNQQhu404YpF9u23
@@ -6890,6 +6932,9 @@ autoinstall:
       pJanDC7yaOnn6zFsz4pkTiTqRJLDkn64mIzO+pPPOMium3FwaKym5TkarkVTHZuWemlwniZfKlB4
       SrDKMX890idveE3+xEzc7JpHqYDfIJThbEPT3BQe38U5CJycCgCvLjl1hhtn7KCZ9dDUie5ou/Pc
       v/Ju0JpGLDJf+CJPBfYA/anCJ1MjUd2ruc8W15JnTWhCT9JI5PzpR3qTfEyHsAHHWBrBEzQ1mI1+
+      THINOS_FIRSTBOOT_13
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_14'
       ydrstPLfdGgsUwihopBqg8FVr8laaSZO94lfPFOrr1fLYeug5tuMP9LqtbtD+PRE/SZZSCoUhgk3
       7UZmE58dzbbYLeohREWfDBkA3vM0X1tg52gJrn8D8BVJwk9jMrFHPdU9kgZCOqGK9L0+2kn88Icp
       czUifdCV25+ltkmiVGRrOSjBEZq1/fvlcPLZ5o+ZaIKEG2LJEgGwe0TB8CGqu6cpva049Qez0UcI
@@ -6922,9 +6967,6 @@ autoinstall:
       LTwFvsy2LyzYw5mBufOXVyY3HoXE2fB4dHn2SCxefCssTsfn7x+JQw0KTSXrhV2yHsfL/s+PI+LQ
       kRH8JricDPvH4Nmd9t8OTx8rY5Q1zosanGpY/IoLxrbTW0OXFF1VWbfHqJ2Pw8lsNDCVjgKPaow6
       YJV01gaUm7j4ihHu3EVhuSDCtiMjDxrIqo1NTcgCcX0UVQe/i6oDnaqDjVTV4geWXDXi+ri62FJz
-      THINOS_FIRSTBOOT_13
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_14'
       LgJ64drr3aK8rEy14mc0czEaEP7XhseimdKQ+A/xKPXCupbdeLAEMuyax+KQGUO5QyLS9BVecpcS
       QkiTiVdinct7ah0WC7x1PTLrrcisa5FZb0IGP9tkDdZ4qPWoauua8K1ObMOoUCXX5uBS9znkYG29
       WjRGUbH6xXpMSYFXfpDUSAIFnOxptUzAm2BaHaxGWSHtuAreGuEljoQi/Bin8RDoHx9RmmGi1GfE
@@ -7412,6 +7454,9 @@ autoinstall:
       UJP2q+pvItRkBK/CIHkdp8HnOCJuaMtKiud0dF8p8J2Um+gzMJ7kuWVd2McRzfqcCoWzABxK6mNA
       32+CbKGie6Is09o1U6YwxUFSJdbwtk2+bOJSG3EpGbMJje6eNRT2CP7yJnEj35Yy4+qpwCkRxupm
       VgDyIYMMhs+jHQ7A8zmX6zxjy5iyTEcelc9v9jGlemRs7wrmmDn5oahtL6dguQjA1Q4oKQ7k6anD
+      THINOS_FIRSTBOOT_14
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_15'
       wxrolbDuMcrVb84+pCckMOCXIC6OErLngOVV6AK+Fy9fHX14e647bS/3yuVhrDmJEg8XSgKY+FN4
       XCAx7cbL0bKkYSOP0yQNMlycKWkiJuzBL2m8SQQRn6Z4gVMceZg/EmkTIChtQ2lFho1YW1CFGS3B
       jIlGW2CDg24JqZ9tqGrGICoMymleEid9isQ8oYIX5tyEQPtxpY2mAyY+eMGOIukJJjuCs+Y+VtDs
@@ -7444,9 +7489,6 @@ autoinstall:
       oxJPSOg7kNjfdNH1b3oqXuBE3+01RQZJOHyWwdjCuxl7jHQW3lkXptNt8yWv4ojMAHY/vYndl/zt
       Iff76YosiaG9J1kAmENpNfgRGWXfnqSaeUs/UpDX+fo4wKEZW7KyB9hcVKP+4qOiwfh8BbJGv1LC
       qjcWHrb2RBIb24jQ6I0kLA3+SECkW+06yLytUvcSUMd5/67ynNctOsrv239uovxBtJ9z2e5HC3pO
-      THINOS_FIRSTBOOT_14
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_15'
       S9tNZqk6rfrIaVNKcam/35jJ2l0KEOeCRSd71KTtKcdxtAiWmxSjM4YC8ZBmk4K8UH0hyhn0JgpI
       r2WzVgXW+1vr63iNWxjfURii0zRe0rfpPgzbU+s1TEDOCpabQcTHIHf0D3SIprYO7d6uEfP5gSfG
       CxvKFfgWhSdtIeN8ipbHQk02y6ksdFWsJeavpQaobDhgZAxMGisg2IuWAM6wb94SkLpXOHr0EI8e
@@ -7934,6 +7976,9 @@ autoinstall:
       m3KQuo0BsU4+eutCLbLd2nVN1GyDNg4XYkEM45/R9I7hIAhsy2yX61wg2m1zGruXlROMrrWt3bd8
       Xr03223SmpybazBovPoGe2vj6+vL32t21w4HLLGPDogysOJNbSfp1mZx1GAj7pAJtY1rSlEoRNNM
       c+2CXGkwTUzLG7rKYby0LnfPxjzkvzOoGv+ctfXjv3mL6787mv4rK2mPLlpW1fK4TYD2FC/m2N+8
+      THINOS_FIRSTBOOT_15
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_16'
       ti6n73snbV9h5/RtnVbu/86kMNo6awG3qbJqfbYYrbXbZkMfKlLkflix0Wiran1o40sf3lEHFACt
       FfxEpDx0tRN6YGhQPnackbkx6ydLgWOqBGM2X7lQoK9MWY1+ehdxeHHwRMMm0Lb9s+N4c9/f332S
       JvI2QRuaaZoor7bYiPGKS9m0PE24BDqlQs9Rgo3Fd4rQyNoEyoEccRBKx/VpUGfnqJOFRru+VTiH
@@ -7966,9 +8011,6 @@ autoinstall:
       Nox8zp2TQP5DAxZI0Vxc2Q653I7uBIxjhuMAq4Wi1xMEH4/ERDi5Dz2kmd5DWxKHdNvNBOWHbxLM
       3FSl+FV+BBERPkOe05Fzd7q90iiBVXixvwaJjrZ/Wjy8rO9pRIJOWSmT12sxRt+6X/JnsSLc9XL/
       IUD5sy2kJwQZ/WiLpEsGgfQBYNDjKQ6SE1eUPvLvjG4SkIvx1g6uGtoZngswz1d0E4UwJVYGUQQW
-      THINOS_FIRSTBOOT_15
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_16'
       v5oxqyzQD0OnPHe34htQlNxHeKr8f0VvhoCykeaBdFi6PblzMz7Db41wojTT2KjyzX0hN1xRyjHy
       UToN4uIlwmhBWb7Mg0iRJbs6TlRRh6jMNveSHHMq11BeZg+V15SAnNosZ8hIug32c0tu5p7KH+B1
       DPvPkTs8gcADMZHjwWz6exed/2lNTRbI0cPo/Pxcljd3mv0wf0mwO5hMrn52LbUC29SVyxCgK3PZ
@@ -8456,6 +8498,9 @@ autoinstall:
       +f3t811n/vGR0zrJTbjwEmo0quvtwTGDgYHPB6T0sT3e7AmbJsKNBNTiRe2f65NobFrDj15eJJrh
       W27vMzWLjy1yVm/2aoXpxZDrta0/8iTfNgU/7FyaiLKEb+mUZsXd5hcr8Zm+DvXOLdDNxGGWabFD
       HCvI6lCiD1Ut/FKC9cO7anl6YFhlpO0ok6ayJ+NoklToetF+5Ye5DC4fTJifKDn8yTH73rA83eC4
+      THINOS_FIRSTBOOT_16
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_17'
       6m+tL1yfMzin7i8aReOPT214Xuo/VAUv23aYKTEnWmChODv1ivQ28BGhwcuuZDjIfSGYog0O2tOo
       zrBuaRkWMqpZuiW7OyOEjmokCwspZU4P7sd+sMfSgOabjnOoZLaH89GbdixCMhYI3clBsY5+2c95
       mfW4zKy1LKFhTvL/pjWdjKswtpIWWub/A6sNvZYYWqzPRi74K2N4MHopUzVk1olncIVzk5q7DMH0
@@ -8488,9 +8533,6 @@ autoinstall:
       qWH464edGuErJU/k+BpCepTCVxG9u64/rpneZXZUzQnQrpRyLbNsXlhNc+N42i/UF30r+1A7EfmN
       0JNq1Z2Z/dfSGK1OedSK029hkwb666Is9Vbl5tc/SyYoqpyds53dZ7cU8Dt4/fsTP+y7GKnxmKB9
       aMpsRFuQNomtKvbkSifwDZPW+6BtkvY9C8Sc0ATJWK/BM9YxU/om3FmVXv/1iSVfynfjzInIU+hC
-      THINOS_FIRSTBOOT_16
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_17'
       +vfxqJ+4j9RCiDlm04Qw9HQOL0LPyCyw8QqRzhbcIRoji07fq2aNPpItgBYR0a5y3uRnyjbbyCaq
       w6yuan+NpG/vSeTyLl4w+1lzm7fgWpqRaF1BKLlsvU53LtpZc2pVvmVTiMtNWPaKR74GsszTwYXB
       OrHJ7u1qq3qnhltmciEHfwZ24gejul+zNe5KRdCzrc6JG6atv/Ibqytx1dvGGltnmxLT7qsq6zs2
@@ -8978,6 +9020,9 @@ autoinstall:
       xj5Jj4cpXJ3OS8qAeqxMRtDwpUKL1y18ffbkGVm77gZbhR1D7Xa54cbi9PZkc9qZj5bhvmrniyPr
       5PRwy6YE+uflug7Z506vTZ16dM8tLTDgfxUlb/YXIaS1dnyzdF9DkSTPA+4dnt/h627WbqGGNbyH
       nHdkxhn2UfVqUUoRKdNIeBT8oQamuCaxOBXHZORWnUx4QgTGoWj3D/DgS1iD42LBzHOPm0cxhMxC
+      THINOS_FIRSTBOOT_17
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_18'
       Dc1eMU4i+0WEGaKzkACfbC3Y/4hd4fxHTpSYXcvsrhXdpxn9p3Mwq2mIFhe0cnTHLIihT0KbImwV
       vfXlBFmjJJAhQoSLwLAY/ztvq7OqWv5i+ECgJwaXsNJEYuRUGp7kGDutCTpVTUUvRcinLjTueBRT
       BAFt13O/Oq21AjWtDtZ6oZ7IoAF/VgJsuJmoDXCuXCsPCMlPcl0AYygKoJjBEiUGsmC6oFI7yFjM
@@ -9010,9 +9055,6 @@ autoinstall:
       Dm06vfAQKasTa2b8XO5udgupyMPv0XigQDmK7BQazCw1wKNHliuru134ofcKm61Th85cvmdGv28W
       vIRs8kzKL+SZi1+4XQF2/x7R/7/KxwEgqP61bzTTIhZ7DTH47yVKzN0tZa9PgTAkrz+cQLN5wp9m
       8njghc6eo6hqROv1+u2rigtPKdqEhLuLsLzvJ/fer7uDqTW5PD+vl+S5x8eluL2vP09xenadd1tr
-      THINOS_FIRSTBOOT_17
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_18'
       bnJ4erq+fh8nM212e7N2T5+fx2tsJCWPon0/jc3H49TUmJtcEc8Or+/r4+UYut/fu7C9vT7v7q/7
       m/NTTdunKz+6yys2P+K/cmu2nU98aVM2xWtSfx120P/+vWVZPCI/lXxind3c+rqSWhvttaAy2tnM
       eF58UUXrWxlhhPdZrZ3bjHVN7ZhbDgObkOFbojbLfLf45fkzp3eN0V7lFDsRq4huWhkI8sjmWBHK
@@ -9500,6 +9542,9 @@ autoinstall:
       gnAl9xvgrO695+91H4GQQc9/BxIY/VcWAR3lzzia50fDP/kDP4R+sP9A/FH9o+SH1g/IHzk/mH74
       /Ej+EfRD7gfpj/Iffj+if8j8sPtnfP4j9wfID+AfZT/Qf8T+CP+B8M/e4h+/fiT8aPyR9MPwh9UP
       1h+SPzj+yXj8wfwD9J967h+4P/5rLvAj9AfaD+wflT/qf4T90PvB+YPwh+kPzx/xPzJ+kP2I+kHw
+      THINOS_FIRSTBOOT_18
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_19'
       w/qH8w/NH9w/wH6o/rD5EfAD6gfRD/Af6j8Cf8D8k1v442cqAoD/w/EH9Y+IH00/6H84/ID+kf7D
       +0fdD7UfrT9ofxD/SP1h+UP7n/0KP0p/wP1Q+FH4g/EH3g+xH74/qn6I/KD5Af8j7ofFj3/yvlB/
       uPwQ/uez/9eebgtbYzu3/xU1sYr73/OnHg0Jt6N2xJ/5074S7UQAc0OQY9fpjLbjJEnY9gaSDcPB
@@ -9532,9 +9577,6 @@ autoinstall:
       FumpH+k2hDYSz6ius6lKtLn7LovWADhKUntR2bGzE+wBxryLZLnkMAK3eswyyCyJVn0+HWLOYX88
       HRJuHb6PpGlaiuszjdZgIcX0X0Ae64rlU9+KKC3W4ImucFr91MsPQLPBgVtuvylxZilmzfk+r4/2
       gq5sd1hnzy4yag3EYoRbUw2pSol2GIoxiC9AZnNX5L2WmzTstYHSLgDVUWP5Wg3oSdgsH3vyQrfx
-      THINOS_FIRSTBOOT_18
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_19'
       bRbpYsoRz8ReXtc+w4qjvVUyRzcEMoQf01E9hMgVPfGWo2cvSl+nlsg8Vy5x4EgA4W0a/hqy9uWf
       ZvanmTOAhzm759xGQ4lkN4zkgr0h+ArI4k79LRBd5/sHjyDe9VWChMAFxY/u7FAghvZYF6VAlhA6
       dV1hvLuUNSSny3mrH002jXOKb0D+MyK2VB0sar8cc7uTfX3ZCG51DBxwe0fd0Bop0RSmQlWZG1vn
@@ -10022,6 +10064,9 @@ autoinstall:
       HmtS8vZhYypPBO77VsO9BUhPVbeoiyY2oDHh3mxwmeNS2XkYhwuIjP9VVj8ekeoky6IogL7C4Ah8
       X2vMNqMddVuaGNvBYs8T0xHFnFN0B+rJgrs9WlMXEr7k5l7CbKpcuzuaoieMzN2jk70yZ3cVVfj5
       jQRa+OJyaX7DKbX4XGi5tsqoPa2VPWGxjneeE40sKF+5Zs7ku9axFf/XQUVDF2Mzi/8E7wHUaP+H
+      THINOS_FIRSTBOOT_19
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_20'
       f0cqcbMNsee2Vp8ydbsCQIgb0px7p2Ka0OvexGkyOqUMsdG7TDzGeLZ2dhVAgqfKgSrmcHwkA0vB
       2K1w15yZv/v9XUiH9LPgcrLFQx0ih87X93Mw0/c3DWD+CT7ymuEqxc0tdDAAH8Wuc5QrveQclwJt
       PF8bfjM0uNmlW7xF5L0Nt6TURwPH14KPm2aBRKZq+PfgOlOH1zrxefAgu067Q9iyX2YmeMhP0Jny
@@ -10054,9 +10099,6 @@ autoinstall:
       GCIqz3EvuTD+JN0rO1XuhwrTOUkjZAtNb2RI9Jkc/YffXWC9ktJLJo/jpGYXWRdpR96sXAm/NOFu
       lJLtEbJROBTzdOa9LRx+mplRBlmcN5eMGBrbcThLqmD85FDUYolCJSCeF53lXkKo+m7dhWZaJCCb
       4vrtKaJpYoA3+cOUx/dzcQxAGg+PkZGGus/mjUcBqwXosBXfDDgbpMg4GK5fH9kzI4w+zOXHmczX
-      THINOS_FIRSTBOOT_19
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_20'
       pP1o7WpzcxJk2eoZKkY0JO03QfuZ/gisnFWyGGxEDtCVHHDEblIWtJM+/sp0fmb2+IQlUFrje7rx
       ssWu+1rL7nNl8zPi8dqS+8xnuBVtLZ/Cog5asNakTqj7YyXQF+P7JdQP6GurQP0/tU/tTE0t/p/u
       qe7/8BsqjttuMiB0n1JDvEwhmrVV1OEQtL/NabuwWS8z7ZHW6VDdr74qyPqjIYXYrbD9OTp4P3SX
@@ -10544,6 +10586,9 @@ autoinstall:
       nb9MRxeqXftmjCKDFLS+7vV7Plv7enKqEL/RTo46EcOzdLfvb1e0ZjCZ5EAMd+/N7eoa3A99X/FI
       iRJAtd2AOgxuuN+pxBs+ujaZ/FK7NS9PctcFg9PM1AJfcobRk5Qb7/lbujcfLdcQ660G1IdYER/l
       vTq7Q2rLrYsu3tz6i1eUbt1+jlXn5VF4PMabaqihCjgRXzkypaudJTxh+zwlhi9qcNxa2PDSd4aa
+      THINOS_FIRSTBOOT_20
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_21'
       rvKWsZwPmyW8NiceVb2/j5w/q7F1DGuLsABoY0TB97sB2jfpqHjUY+yIEgDu6xpifz4/8G2lIbZS
       Dp23FoINCFSj5t2l0AYeot87Va/unoaRZml3ZQ/TiMROrlo/zDlKvyprO6/mdl0/kjeAFvPL7xqb
       qax1AVb1ASxOOMSvbG3j5wHehTxdLNWfAdLkKMOEg2psIjvvE9qGLgMwCr8SWsRzkG5MFtEW5Xg/
@@ -10576,9 +10621,6 @@ autoinstall:
       eaUAkyqYVC3uvBtYYAVBqQTkbuB8nErKNFdGIbERfR1kuhwF+CQ+iXFHVVh1Gzyc80NtWS2SfJx6
       Do8ZevuQhf2q0jymF7HULyYxFV6mXgWCPonf/aR8ndi4QfgKiUNMCBqA3zoeZspjGXjaDbzhKQBI
       GgYYA5TefgZRup4SjBbDq+P3HL9k0wRdIawmdiOp4QBa4xGAXb6UOb3J6l6Nqy5ztiBAtTRyI8WD
-      THINOS_FIRSTBOOT_20
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_21'
       yc2AfxGoQ3FxIVgURKRh0/xxn9nvjQ2TCF5ZNaMBIgSPmq/dVWY5p4k0MbsyiLsoDsh2wlEzDiOc
       R3mCpBy7Q6FfjDxQwSreT5QzWuvVPBHO2qKL372UoKTIcL9qZgW83m48t69ccle1OX/st3YvdV/o
       SkNDZ1Mv3h4/erp9AW325Liy+n5hQWvPvtCl2pY+PLi49/Tm5Pp8TuHKIotl1zkGLzME+4Mv7H/o
@@ -11066,6 +11108,9 @@ autoinstall:
       ZMBXBgnsTEkhQPwoEevaQDe+Io1BP/OdNbQKcU1Rs071mAzCfD+pEG+B9YwOMoFrCjRIZkcJZkvU
       ESXiIAmyNg9CF7kv9ZeNbjN5nDZ2O2mcNnI76TZp65rye/Sa2vEzH4cVADa8B0RhMER4GFE1FBEk
       sgYKS5OVpBGqwilH5fIMZYAqskbMeT5ORAWQ2SCVRE3S6F8fgKqxNwWlkTcAsyIdAA6dpUHOJKkk
+      THINOS_FIRSTBOOT_21
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_22'
       6kQLqRZOpEk6kSTqQspEEylFohpZMpEiykUTKRRdSLJ1IknUvbg19gE/ygLkU/S7KK/536J/2u+O
       djom54FXzwCxEEThEwrcQIK9pYkw1PzNgC7mQaaJkRPoO+35FOdV93Lypud+6qG8ntyCtH+O1MWf
       7xROPH+GfkpzpMDzq2/FvtTIyKnaLXBAXvDrxV+uVIGWbE3eEd5dD53SD6lu2h1bN/ApK6pGqKus
@@ -11098,9 +11143,6 @@ autoinstall:
       UCLesKJUWstfagk8OnDLSnqz+FtNzoAVCrkfiWQJvUwUTIamhRD8KFgAZn7NvzkdMxt0+qaUckK7
       doChXRuV4RZLZdJv+RXXxxtCgfGni4OYk+AWOQwC7Ft7XgBxT38iiE3TApPIUQimoNUWlQDzADAX
       Hc7IzKBPjAFIN64TlzQKQdhG2K5lVrFIjXNeItRyRU4kxsDYArZhQkQfBGZ18SbdWU/expkQ/kqj
-      THINOS_FIRSTBOOT_21
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_22'
       MLCnkilI3TShIdAXu3YzQii9Zkz24FeRsVmr+iS2treS5RiJSXtpJt0ox49el5j/c6rU7+8AuV2+
       WkHYVuV1+R5W/ug5n4/rs2uHW3f95NIaRAhcb01c+LM4Dv4PQO98zPN/RehNbUz/dXcxdPrvU8gB
       AAR5/l9/sbTzFhtC36m6w7q0E4BMwL5wyvF0SfjLorT3ZSwaISQtPhZCmc3vBx2AEhnlpGtZ+DKk
@@ -11588,6 +11630,9 @@ autoinstall:
       i9J8kq1AXEINXyBat1sPq5GYFhk0foyrOSCikeC6AzAmZbpEOWJip3N1Lu2GKoNXpFzQNUsaF0VG
       4jzs1BD6Yg9xWvUrBNLp7mmL9E+nCpyLCRHgm4OQc1EPOwx8fzKP8xlJYH+x/qMaPoMZjUFP8n3A
       OyjY1HMYY0Klz6POoTbCOpiitK/hilSM/513utevPmt71kLP2ph0Lo0HJ+dRA3pjJiIMg38J4AqK
+      THINOS_FIRSTBOOT_22
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_23'
       3uSgubTTeEyy4OXLVjRM5nLEFShncfl1tZRkUtluLH8LMrqYbSIeTbgDO0LXEGkzWjBMQgs3TSz0
       dWQIabsVsCERn9SHtNLRh6Uyc63pH6VlAQPy/9Cw8DExrO2eIubCQ4gO5Bcm2AmZxgBH3cz1QBhS
       D4+yogDijeBD2EgVWqpu8Pe/u/uputgEnzRGihkfib/wL0aifVRBh1brBxP1VGgt1q5e0tY2br2d
@@ -11620,9 +11665,6 @@ autoinstall:
       w7D+a0fTKZmKUXpbWWUuVwhRwoOvUZKWwB1Q9mgkIZyVqvkKGo9kW3R5dWo7WkwClGtpLS6Xfu6v
       kzylHxB/SUQH2P19zz24D5cnRxZeNTtQwcjlNFMYRq9ozF1jlxQbGH06vrw6OTw41e2NvgRkQGNf
       +S3cLQ6TOMajBZebgfjdPSFvi+b8PgazkWGDxJrDJJddcw9TnRbdr8qLKp3eDwbCrgjO9pGzxuEQ
-      THINOS_FIRSTBOOT_22
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_23'
       5WnNKqMKz8KuRT1PP8vMujrZ5/b/oFI5KbLVIh/6gxPeoQlK9OFlcdsyFlp9A6mqp1tAbBgbobSg
       CFnSLTw7B/Heuty9w+Pzq+PLYDtX0Alc9Q81IjMvEWZgF2nbnEW2Jn0POpao88eDjM7lgZP6+tIU
       1nlgKqxfB9CxOGv/C1bVMvD9vNrafc0Iy2aafRxXYjTs3PddUvgLNG5z9dcwcyey/X1ZLIbcJJux
@@ -12113,6 +12155,9 @@ autoinstall:
       t5uxF5Gfi+Ko2GI5MH5aN7Frt0tuPP5Fvo+wBUSxmjm3eqIX2HpQYvggvvcn8t0Qb7QeLWWxznOz
       9GvPq57NL+rrNN78PqjW7fa/a0VKrsIpmcbXX25w1JppxVkf1Ac8Tup1W3x8B/ruMtpD3sT/d3nP
       ltzIkdy/TtGU14HGEgAfGmlliuQEh6RG9HJIekiJq+AioAbRBHsHBOBugCQ8OxEKf/kAvoNv4APp
+      THINOS_FIRSTBOOT_23
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_24'
       JK7MemXWowGO9eEII6Qh0F2V9crKyszKR0fepkrul1j/uLI+tlSIs6W8FKJdPMRNrX0so53D4Lo7
       1156bb3lgXKPVkKnd0b0xkepib139OoJA2yAC9P3iPLMJsY+Zi1rPEdXJka/wIQYuBb0keqNJ+TK
       QwbyGOTvpHRO9DAMnGJ6UDBM6ViayfoLasjLN9I0yDgown9O+3gb+JLm1aWdM/QLWQpMDKiLIphW
@@ -12145,9 +12190,6 @@ autoinstall:
       q/NaB4RArLJQR+RdhJCkh+SX16fwGPb0GDzfifAofHLCqvkGjbC+8U6zwkHqkiA2rAohRpfBqiv9
       TnRmNxl9l6yvF25HAWHK/E5v0ZB5fNH9YtnqFM4ieJOarulG5IEER4N+EuBx9vWuWzbLahMI6mfg
       V5y2slPC6/b+79dtcdbvGoq2pNv9coVu15219edC4pCzNiHqcsZaqgvuYRBERQ+YnnUFpK6jvO4u
-      THINOS_FIRSTBOOT_23
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_24'
       ObI8vsvuOs2StF2+JyUnXpv3qwkZoEOFHVeZIEPib3g3OGgixEGqjdKfnWSLF3XYYHPmOWllyJH/
       khM/ci6KpUi9E8sc2JVaaNp/silkoRile/O+vge22aGPx2Rs/mntMmAc9Ofz9h4zzfao2gqY9cR3
       plwJyrYDxTkynYH6nJ8TiyfQqPR9NWIl6QtLAsOnKDhYPqe15XFYMX+kISGC1AlsfR2fGe5PfXEF
@@ -12635,6 +12677,9 @@ autoinstall:
       nQeo5yYOcF31A6TbXxzgvl6t8JYDxPvtB0jnDx8gnT59gHzyhQPc7wMHOM95o9Rve0cpz+Eo9/HC
       UdbfNUr79aNR0uXCK7m/g1fSDp28kvt77ZXs/zdXMv54l8JvXkn8nXsQPg9g/0Hud/4g+e35B7ne
       txxku7sOkn/uP8h9PvEQ17P+EPF31SHyydIh6tV3AUaAjxjj+ItjxMvbxtj//WPUz58ZI93+MEa+
+      THINOS_FIRSTBOOT_24
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_25'
       WDdO/Owcp329cpzretY48XXjOPH/8nHq1TeNc313jHPfXxknfp48QTkcniCfXT3B/bgT3N9zJjjv
       LRPE24cnOO5nJ8hv353gfBdNkl/WTpKvOie5/usmSbdY62+c5DyvnOS6b57k+t6r7T+i7b8+Sfv3
       w0nO+9NJrnPNYcrVhYdJr/WHub7th4nXqw5zn685TH76wGHqj48cpn168DD1wvlTXOfVU+TLm6bI
@@ -12667,9 +12712,6 @@ autoinstall:
       Vu8OULBPO0emt9XXY/X1wiD1F4u3WFs2F0suk6ztVqj07VAxg96u6QUsYJ8bO54fDXZ7u8z6bC92
       a9Zg1HDqduSdcXeui2qO76/bNbMAdDTCYD50anYlqGHPS168YA/tmZ44dGRm+NAJe3zCPjY0NTU0
       PnOifM606wrt7EHHXgjduZ3rFuK4EQ10dy8tLZXn681yEM53Ay1uPXKj7sCvltKP+YZf6iv3lBfi
-      THINOS_FIRSTBOOT_24
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_25'
       GiYeGT9ij7h1N3R8e7I5i1b2IbbsskGICHi2+2yg0AeJwsFuZ5c9h68qN1Ye7Ja97LKGKrG3KETE
       l+tzr7PNOAYP2hiBFArq/jJberGHHbKBNVRddOoVt2pPGLJGWcFCEJ9ylxN6o8L3E6Tn3233dMVt
       xGZhgpSG655C76Du2gvOokGUF2IQp+LFy3bkxnYcmIaRA+ZfdPymW5bxQDDT3WwBTWZdO3QXXcfH
@@ -13157,6 +13199,9 @@ autoinstall:
       mvWPreb43wXEVqxfrib95q0hvVvXsH8eEENYw4AxwNespT+SAOwGHFxLPXdRC/XCXAOXtnCfLS2U
       75h5391Ce3lnC/3ITwNeJ3yzjnKydx3x+PA64u+j67j+LwJiy9Y711O+O9dznp711L9960mX+wHB
       itb31nOfVRvotyUMvH8D2724gfh760aub85GjnvlRq6zA3AXYO9Gzvt7wHkij5sQY8g+NlG+v7CJ
+      THINOS_FIRSTBOOT_25
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_26'
       cv/zTcTXWzfT77x2M+3TezeTH54FhIthTbqC+Nt0BeXpAUCoQuvkFaT/766gHL56C+lwwRauu3YL
       5SgGeBzwUUC4RNZVV1JvvB+wFfCeK7mPP17J/b1uK+Om6q2cP76V8/Zv5fjHtrLdC1upt364lXh9
       9VW0f+ddxX1XA64VvF/FfR6/inj/E+BVsu+rIeOAmauJ9+euJp5eeQ1wALjmGtL1i9cQ31+5hnz+
@@ -13189,9 +13234,6 @@ autoinstall:
       GLKYW7rKt8Y5+A6XU22PfGaaOsnlyfmV2FY9X7IYf4gNkvhEbK1tUXdPMn3Fz6pC//Uir3h+ZdGH
       mWLq02Zs8Zckh/RRmUdoiOd3ps0CA5dZwQ/MmAUTYtWaMa4z5YsqaG9mmve5eP8Z4BWAF1fQR/+U
       RRssH/G1JF44X/Qjnmvw3I/3JRX0++RTLbKBJ1FBX+R6H77k8xKeb1r0exaauhmAvzD1h3xtrxTZ
-      THINOS_FIRSTBOOT_25
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_26'
       r6BPda4peyXe7zbf5xk4iueE+f5W1G/CA1fKesKiv+V+YF6tw3jOM/OKD/4jPM3mXQ6Hv2jRZsOl
       tr4XXLr1HTwIFSy4f+qnw42y2kzfv6mgjf2hRR9W/A/xAeBCWpdV0J8UH22daf8Hi7GyfD7smwMu
       hea6FuLpqKAfuBHwG4DTAT8mjSbX1rdbk+P25MnyN9GWTrkwK1+69O+zA1ZlTb3dbOc6nS7Hjjvt
@@ -13679,6 +13721,9 @@ autoinstall:
       OAaMNhww7GeVIANvPjvZ00lzc+ORKrF3o17N+adqgirex59XSmAsqKe/1gwv4r2aRjalQWm3qttT
       sxe3KTHE0ZSqI6bVWI6G63ST9VctSe8ZknSEDN301PM7zk5PCBl+lz9HtAp6F2oKUmxMBfAHxjdL
       SldRxoNGMl0q/cpjDmz6oq9wUp9njMsNVfLtJxKTi/d7LvB0ugajowCUHINTZ53Y3FARBi1G+ITV
+      THINOS_FIRSTBOOT_26
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_27'
       6vOOS5939FN/32F0INy7kQmOh5u9PilZN++QMkiffWSLEoY98NeLHNhpLWIsNWdH9K3DnuEyWWbT
       glSFIwuMKnyOthDptE2ReRmVLdmC6XsVxYFiLaQWJ7DFpMxU+MQ7EMWCvDxFH4FgQ7bBZDWZccij
       a/AgpsrAxzAeTilgXpyqF6jMkdYcnuqOFTE8qZORDJLozPKh89PFj4++LpIHJ2/DLsA3qMqUv7IG
@@ -13711,9 +13756,6 @@ autoinstall:
       Nff56Gqe9zHz/nHAXYB/v5rzL1tDOt64hvO+cg3HldZQTu5Yw3n/bA339ak1pMvn1vD8X1pDffj6
       GvL7Z2soLy/oAK0AN3dw3d/uIH8KHaTjazqor+/o4LynOqgnZwB3C587OP8LOjnuJZ1cZy3gWsA9
       nVwv6KT+39nJ9e4zeI91kt7f7aT8/KyT57wcg68A7FnL8UNrKR/ZtcQ7sZZy/jBgL+BX1nK+F66j
-      THINOS_FIRSTBOOT_26
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_27'
       XHWuI71713G+8XWU+2Ad6fLWdaTXH64j/+9ZR7r+yTrS9WNmns+uI9+/avC/beAP1tH+P2nw/m0d
       +f789Zx/y3r271jP8cPruc7h9fQXt64n3R4CfA/gI4CYQk118dx3dJH/dwO+Ss7XxXNsyVAepjKc
       t5yhfXpDhuu+GbAb8K4M5/lMhuf+msF/ChBLqYs2kJ4bAV8m+9lAOb0dcAHw3RuoT5dvpN73b+T+
@@ -14201,6 +14243,9 @@ autoinstall:
       ozICzOUTKbEA7hfs1hNDLlthcSkYMYfYTua/4lDPio5lkulQTdFOXeKu9LGQVEaVHFiWaoqPcXFk
       EdtkjMs+lZUXWJbIpTu371S/WIwfLGK2EKuE45F7fnhkPJSaqk29dL/zi8oS1yJ6tM/xOvDCy3iO
       JI/SY6byVGkr6Cut11/c0j8XzCf92EyfkSkq7DH7ilpTAL17jIfopMyRJ8RZS/4UQRd6YJICqosn
+      THINOS_FIRSTBOOT_27
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_28'
       5kClK43RJVuroGg68j3NK9v2ag5CdnmIhzwnuaeAex32BfGlCarAxRvjUanEkrsaiIfq4zVygOoS
       qw/+Mh1RcFJ5hNEqlrA7K3Zqdo5SW2ChqSxW5Wr1wmT85apIexYwmQmxZIFYs1acEc+DkRRwVAwd
       aahAnWCfUDvO+W5ARJ2c50r1+016mvCzfPpF9fkVG52TAreL18arM9PKsjfRnRWue+NCcSNCPWhh
@@ -14233,9 +14278,6 @@ autoinstall:
       1QRYmS6W96WRt3X2kMGV2VJQL1q0cgxa6rmpLMgTN9KvsVRly9TJWfBnbs0p4TiWhJ9h3v2kTzZJ
       OkOyUNhny7dqGw/F592DkrHIm6vfLFG835Hr6TvTPdAziJE1AmELXLP241R1ZBMDa8K+/oGz+V7y
       R2/P6TOD3QPkr0/6e7tUUFcOHsCb5sZBIRTGIJqgqDgp6iSaaNd0kDNuGHCIAwn3yBtiQz3Zl8UJ
-      THINOS_FIRSTBOOT_27
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_28'
       wJleBl6lHEwa9JMtDJay//Ydej29etU9d+BYNyrYyCSypMhw6OV5DkdKpIe9JdoLgfUAdlI9JOvs
       gbZEOL6x2Xv8BEpGujOUjuiw6d0h6sSrwTQ1CVkbC8BeslbMqZpK7pUcNXnmHLetJJY3VmBy4fi7
       a0TftrYBpDBT2sNgIJlHDLUK8gzlD92EpDw15RldKoNrYzWzA5XithfmpSCQIKTxrIdmtBjGq1yQ
@@ -14723,6 +14765,9 @@ autoinstall:
       OfMU7BY3H2595w87jXPMpXkem3GqKUbHPmqQvIw3Bp8Li6vBLxTJqNbgGtSasSBZW71oWz1nbS0H
       ObiN9AHUG473jsUxODUyE2gJMPVWMXDCGjljy5R6Tsr2xmAlWKIaZkRphnl4ZNY20XYMQEQXZZyY
       Vg5px0sVlpPHOqkSAyHLGGwp3M6Qn7Tw9bbEDYrdn1yL4Z7eTpuU1ndQMJnWDu7htoznRc2wzXjD
+      THINOS_FIRSTBOOT_28
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_29'
       RhtC92gxtCUCiSW/YOQ6aZJFeceT4jFP1LBn5D8Xq5Ld9UpO9rqm5fXlSOrwEcbhb6uex3iOXXLd
       apipjP1kyyy+AEPqO7GUsG4aM7fqTivjVG4fswvU/4WuLM+GWX0Ze/Z04mMeccKsbzZzR14yJUMU
       UCPnhCZmUCWec2oU4e2VilvwRKsG051FunsWFZw9VgNrG4W1vU2/bY/NjbJ1Nz3xTUqnDu2DoHtN
@@ -14755,9 +14800,6 @@ autoinstall:
       xE6IlzBsh4OJHmsfD72tfXqUu7/FE+0sMkLNUPKd4iJ3ZSXGnJUVEELg47oXFt1CD3tU7zlOMXch
       zK7n4mDfyJi2UP2lXYYdsgfos0NOPg7f9rdONua9/W320jG3PGwT3NpX2/MMA84/O9oBex6doOl4
       LU7WtEbDEbIHaSLrQFA3ytvPOBN6A8E6GECBwsYVzA/sobnQstpYrrVeS+l6y/PBDJ4m4kywapkU
-      THINOS_FIRSTBOOT_28
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_29'
       Kj7zmZ4YqgVHsYju7YVu3e6VduspXGNZ7+xhV9izeyAc9wrdG+rjYfdosNKePTTYjYDFk6+65Uxu
       pd3f27+ku3dFd/9yu79/5ZL+Bb39vb2zdzlh1A0t4YdliQZW2juCCXfM3uog1FkNApTKTqF5VcVp
       FpxmT1haiw/AI8642z3qOpVHj77SDkuzB7YPbE7X0tfTO3ujxMM+ZtCsAkVs40IYbs9fJc5fDey3
@@ -15245,6 +15287,9 @@ autoinstall:
       /Vu5/n4hyf1nCZ8pIrvmFZF8rxcR/ltFZJ+2IjrXL+e/LCI+Hkn4+yLS+5+LqA58GsU/m8f/Qtpf
       upD0/yLgGsAtcj0M+DbgyYWkpzmLCG8dYCngjkXEz5VFxM/fL6Jz/7SI+P5oEcn3J3kuYzHJsWAx
       2XHnYqLbspjwry6m+34i8TYsoXv2LqE89IslRG92Men9xWLKY9sk3FtM+33FRPeHxcSPWUx14Ldy
+      THINOS_FIRSTBOOT_29
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_30'
       /rti4uc/JfzsUoLTl1L+yVpKePlLKV+uZPTbyIgP3tO+zvnFuIfRivFX3C8Y8fEKIz/jPvAQY608
       z98bYc4X9x0ML8YRucf9ituE191LGKcZ1fpmRjWY102eS9sxhjF2Y4xhqPL8Tka1kv/ewLiO0cSo
       HvBcxuXjPRf3Y97T8n6C+yb3l1ny3HEJua9w+bkueD/AfZvHJfcdER+M6nqJxN+AUSb/DjHqqZ5i
@@ -15277,9 +15322,6 @@ autoinstall:
       ij7XoL0UT1CvaHVlfjXgiUc713nccrwZ8Hoc5WODKLCiuuo+I8gbBrbBj1QeVI3qMjXANqp7RI5O
       xNFGLRjwM6qKVP/s4hd3RL9dqarsBMGcVdSuORtl/o/jkBAK2wR+A2yTPyiKe50WnM1s42EDCZNt
       lg5aTuVvMp+M61x2I1zz6RIpFR6HzuXKRFQRErQp+5d4hdzi3805lMb6RkgPsq2qbsQrHtuqvRHS
-      THINOS_FIRSTBOOT_29
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_30'
       A0JPhhHCH2pQqEjz8ApOwSyJJoyWsJU87kmcR4HVDGFRUdjTIDhja6smmzaZmThDKONA2xFnMH6l
       XTZFQ1HF1W4XVNlW0zY1DGyrLIcJr7e70K2phTKhr4lbRrAOPpW1NhH62ZNjbXcWW4i3TUMAetRA
       ncJDKc7ANq2SF3YUhHhfQX1dkitObPUSO4k4MqpkcyvdUHSJhUgK/GZOF9sp0SwVJLZWOpoC6hQN
@@ -15767,6 +15809,9 @@ autoinstall:
       4VQmZTJitoyCDgZag5YjWnVOS120UAGkWjoU1JdpGl9wC8h4lg83bDAn54PQjVVj2qeHjNuJWCOb
       swJddZah1G5FF43s6czUFoWPGYEnRiSQoestmY4goDXI12ml597GrDLiURLrGYb15MBzoTzHqtAO
       7EjBjP9FKYCgJqZ1UeosWHcvppf8WC72Of1aIwY7nH5KDAkCnYCePQi8iK4mGCS5xkz9NHVlSXOJ
+      THINOS_FIRSTBOOT_30
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_31'
       FTaql5CkBoaj1cgauNHYLNYLKQB6YqZ1DkYJvS33ubLXQu7QlYLjzplrgFgtxmwgOmTZoo+TeMSd
       apnnZSmYNnbxVQHleGzikZ41RwmomaNpq6zkrDFRzs3BdIGfW0rhko+PdEYgZqjwh/fFSTmpWzJX
       D4nX40q9ubbwlSqwvSs/NvxskaSDwqBYxHLEX4BO55BZwKqrRbBhYgYWNstXYI0qO2vvxRqEYQ1o
@@ -15799,9 +15844,6 @@ autoinstall:
       QhKydkoHvLlAWye9y3AOseIsp717G4RHW1DVHmypL2P31MucYeMzLGEp+Q1EPJpTIoMlv0lpir48
       IFUmo4EUjlWRmjqXIr/AnpdSZDT3NHWjs69DvGHdGgqkO0XzGETXWXM6C+OI14SrGnEjMhqL26AX
       1hPW/V09ETGvulPLUKyf0J43CAtkRTKqV+GutB462SGV2RxW0tPsaRAQ21HaR9CLNGHCOczqJGFZ
-      THINOS_FIRSTBOOT_30
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_31'
       criyzaNSoxeloJ5UpnPKqShZDO6gdsK3T0y10+UspbipFybqsrK3aQoOah+cFJybDesQCT87SfLY
       JqNp1Ixxa+eFtNWOt7Z+Y4JB3ak7Gbon4r2TrMlStyIeZ3GBo51Oovdp9PTTlPb0SZlCeFTX2Pol
       dRiqbRrc9n13pt5K7vuwGIcjDFeKWWccHLaiDhpFbRWQLgT19VqQPGj5pFI6R6MM3Drq2nXa5lSI
@@ -16289,6 +16331,9 @@ autoinstall:
       l4dHf8bizKpbMcg6kKY7+xq1vXLxK/eOeAyknUORQbt64WbUTvU4ElwxIYzcwIcb0qIs8ml7uYwF
       oevEVzyWLbUIJpq+4kXLlKxazO6wXp75AjHBAE85oZcR0Lq/lL0+TEMuP9x+64bdmo+AF+f3eBiG
       Zd3WjYplFbUCPnepUB/ODLIqWa6xeRWvhPTX26A6kQJW4zfee8v1q7zxuSkHo8crEhzsbi8i8Ssp
+      THINOS_FIRSTBOOT_31
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_32'
       iRikJWb9BHmMpLgsirzjYNjWoox5aCfW5Ybk1o2nUQeGkXZfanVYB8ezki2DHhNPKaaTf6HidPdn
       mRDbGXXU1kOxok74ui/kY46MN3uZMYWWS+etsYeMPJLBukYMP1k3M1mLYE/3irhCsSwqZtZPshna
       hmQlahrHzdvI4LVhJh88MuKtWby8mfH6PKZ1IZnocyU4fKnhhZ/saTxGXVegXjDaqOv2RjvcenOr
@@ -16321,9 +16366,6 @@ autoinstall:
       8HrQroMA3UETF6OPIyEMxulxbzAxvbvdDU2qTs/Z0OKp2NMgSvFI+/lq/E/OFfz/1FX88Zfu4pBl
       5dj1Y+EfrgM+BsOR42esDOOtijxaJPj82HXHNgbf3u+G9HB5UYvdQ5D5H8QvskpP0C1RHGwoqklX
       ESJ13A0gkxBJ0QcLgCBFY4k+9pAo/9KF6e1HOVCHMRoK9oKyOvwdzIQ8ATkgonY+1YYo62+oOe52
-      THINOS_FIRSTBOOT_31
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_32'
       g99NvQYDt5wIr1xMM3lmIFB/fywHXnu+y29YOLyTYpDzhxQUmrGhqdoQnnZhAkSQPtWoiCYF6zGz
       DwrDKGBvJNosx6hTBDTxaRixuJ8e3OVARrGO877BEUeGAsXpPWyvLkBGrBuywo+rsq7J2UJVTa1L
       MajGEcSJGcMKbT3CLma5mtfi/qWj6LQxIjmeqjmcBLP3BlV6phE6yfvCDDjO9BzjNrfhZcdm79W0
@@ -16811,6 +16853,9 @@ autoinstall:
       pDLLKSUsmxWbIKdnZJutSRikJKdRzIo8nq4LWKwgQRp1gNYyi+LZFunA2DqNaM6XL2i+ZIqXy9sv
       5JKmNA8ScreeJnFIruMQGKIkgKVxhC1oRKacDmJcIA8jyQO5yIBwUAD7LUJjmM/Jd5rz7bxXa0iC
       LZLlSMQLCuQ8J9kK8ZrA7pYkQVGi+jXbL3cZkTjltBfZCna0AJKwx02cJGRKyZrR2TppIQkAJl8H
+      THINOS_FIRSTBOOT_32
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_33'
       46vhlzHp3X4jX3v3973b8bffAbhYZDBLv1NBKl6ukhgow77yIC22wD5SuOnfn18BSu/j4How/gab
       IBeD8W1/NCIXw3vSI3e9+/Hg/Mt1757cfbm/G476PiEjimxRJLBHxDN+SiDGiBZBnDC18W9wsAy4
       SyKyCL5TOOCQxt+Bt4CE2Wp7+PCQSJBk6ZxvE4BLQQJzgxlJs6JFGDD5x6IoVmedzmaz8efp2s/y
@@ -16843,9 +16888,6 @@ autoinstall:
       oPnIlOdLqQCuB/XRanc8cQsXUAJ/EfauY0nnLdfht0Tkkoadg6SxRuPJqSi0GG/BwIIQJGBXULHx
       5ONtB2PSvuTUiFG8RhL1Xx18owz8wrsBuGfFhLqMLOfZ0de4WFzjMh5fTBtMHRbkpA5KizxoGfPu
       g99brfyVinaly2xwUZhRjShBRqrmUjOPDiNOzvka3neT6T2Mz3kd4oujmyxFgDRYl1W7rqaNLXBp
-      THINOS_FIRSTBOOT_32
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_33'
       GypaG25B3biuMgi8eT8IF563cnAJWaniy19wxpWA9MmPOCeeFYqahtgMrUelkJlqjVa8Tqw/pUcG
       H5jScL/knrZXBm7h1bAvAAkx4x6MhNgGzmbkNsC22VpaFFbiGJ8/UfZUZCuJj3sVpqYlZYQukbl+
       itkKKrivORgjMA6RUMPqwpyn24LQRJ+2jo24ijJvmVghvBwC7FmcgAvySuXYcKlvBFhJD9KYiD7j
@@ -17333,6 +17375,9 @@ autoinstall:
       S7DsEehQTtp1lxbO/Oehpttu6JIqR9CpHZzfdqyfAp4q2S5awa7wTweexiLtZ83Nv05f/nX8979O
       N4cbScMhrB2gpKNm1C5bo+JZWXSIG0Ed1z8TDeFy/PkYI3c0NwuIMB3mY7hk3zYkM2cmir+zfgyT
       45yrmMibrP/h8FqtAZiaptNokc+zq28FiUFsJRgC2CbKoQGw+pgPHEm3flUqyPZtygMbwPpcxydL
+      THINOS_FIRSTBOOT_33
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_34'
       EUbKepSAxb0MeI/pjAy/70gB9QwBkSQTt+g++FsuTtZl01DRF1ocCN9Sg69+tqqheZ5ayeYylkAl
       pjKGUHK2cafx1hAQ0IAoNb0ebU8z0aQziQqgAEgf9ACxVkAOkUZKuSJIbxFgz65Ni9xRKYv9TIwL
       +5j0x6KLq3nwF/4cBRxvja7xApiPbVQ+L5yYcin7Xkt0aMPuxyHSkc18NNw0s6PzJuYc7l0NHRCp
@@ -17365,9 +17410,6 @@ autoinstall:
       86u8L1RfqNAcTWB0GCMuwHtb4yIxBgCd0lBZr2EojTt2H3/Y3d1Vx9XioIaG4wGrDmrNAaw6YoLo
       hu3oKgcCqdiRoq/lNzQr1Fs79NysPms6PX1B1BvWcQ5y32xjkpJeupbi+Otz/m2z7uTZeAa3bBo6
       wdaqnjyP7IF2xK43bQ0W2/slvY43jbgTxBuSKX95M6qVrNr4h17vb+PkJVV5ouBhBaFwNCGt6QBu
-      THINOS_FIRSTBOOT_33
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_34'
       zXSUjzMdFDTDsbDdRI+HP+XweN+O7WC66q5926/uqRAjFn1SCQUSMszrTFpod9jgSsN3Kd5W6GvH
       szO/you8nKZ158JeSpiJQqak0hyR+UBj9cYlynDq7acMBrQk610k4WhKG15RCsyNZFQO8uucKk9y
       Ev09Vsb4DlyZKriohW2crs+JD3v0zUpCZkhozt1eqkqOajcz3M2OaPf3v1vBTDNxaOrLEcDdt4ev
@@ -17855,6 +17897,9 @@ autoinstall:
       m2zxiQDW6s2DEtfW4kR8kTpUiZQ/c/azajFVvviAqvI6uqGMZvUue2botNBBWpGuYYbHboQFunA5
       71zqK8UDr0rYU3dIdn/+WGPx7LUHpJ8kL9nbfEw/Lk4/L8Iqlj8Suo9c6ZM9RcZ56eXRTJywKJYL
       NjmSeoo7BunI11u1bJPXnUJyNLy/punC+bsSexkL6j7PHpa4JyjBxuiM4unDHSc/yLTotyyKNCxZ
+      THINOS_FIRSTBOOT_34
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_35'
       A8mHKtC3m/CaFkHGflFZmJcOz7UFb5R0+SyT0c1Rxss3K1LnNCWmE/cuN4PmEQxyeywgfZbnNP1q
       UXRMW1vjZdw75TXFnTX+pzEys5tV8OPLgQKx2hUfl435tRyzV1Q6mosu/tDThIx+6Aqx38IqMK9j
       rPtFre3Nhu7z0TWQSLMX2+9RDqdsuXP+Vdjv3R7RIpH9O5N9TNmO6OfK355vDl6/5+hrjX8Z3vYu
@@ -17887,9 +17932,6 @@ autoinstall:
       dn24qnj3fI2uPV+B4bD7dX+7/ogl1sN2/Xz14y8/tsGFHFbPq3GZo7e/Gn6vRtau6g7Ly17u/uvM
       d5j6drX+eKBHchrpNxzlFQ+1VNKeVnRM48QG+VkGn5Z369vdw26Pw/rIf8rAh91+td7XIcl/joZ2
       yNb981ec/6BdGWlHdNjsXmnpw2a52r2CM6cTaLBbQV4av92sbz+t9x92yz1CP5uyWh8+1fhWiv6W
-      THINOS_FIRSTBOOT_34
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_35'
       GfTyuz1t9+Py4bA+fe7bbvcI7qjBKBNkPB2+BaWVNEPQJpizQUSrh6R8VO5s06/3W2x2UcrGWHsW
       cplRK0kZk35jypcLGy5DX3976HH55f7x/tsaW1dnof+636+3z4uH5df1vlReYczT8nmTZ+PBn4Qa
       +LS9nssh4U/QSol/COUGqa33UbwXeogxWKWD+KdwA/JovbTzOMjoCT+ZrSSvqCPhdXHgcVBKuxgd
@@ -18377,6 +18419,9 @@ autoinstall:
       u9h9drFYLBw+67BnrD+Rio1kLBh+zniWs3TE8olgb7ia7PTTnQueiJiJ21wkSqYJG6UZO0rSqWDf
       gb8SMcvSccanJGWUCcFUOsoXPBN7bJkWbMgTlolIqjyTgyLHYjnjSRRC1jSN5GhJcjBWJJHI9PK5
       yKaq1OXo7B07EonIeMwuikEsh+xEDqGQYBxL04iaiIgNtBzieEs6XFkd2NsUgnkO9XtMSMxnbC4y
+      THINOS_FIRSTBOOT_35
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_36'
       bc6Lcg0rsMfSjIR4PCfNM5bOiM+HuksW87xmDTaYX1sZMZlo2ZN0BosmEAkbFzKO2UCwQolREfdI
       BIjZ++P+z+fv+uzg7AN7f3B5eXDW//BvEOeTFLNiLowoOZ3FEpJhV8aTfAn1ScLp4eXrn8Fy8NPx
       yXH/A4xgb4/7Z4dXV+zt+SU7YBcHl/3j1+9ODi7ZxbvLi/Orw4CxK0FqCRKwBeKR9hJgjETOZaxK
@@ -18409,9 +18454,6 @@ autoinstall:
       lKf26pTRZtPsyeHb/qa5y+Ojn/t65isCr4Tlz6cwxzuPijSeDCdIMXE65H824A60qL8o5xi92lYQ
       1KfHb96cHG4Nl626rDmlmr686h9c9t18su+s2x4/PHvzpeeVMe/Pu3sTTLWzN3nrMBZTnEFV1/Gv
       ThPCyH9EuiAIIzHiRZyrB/PAI9VuuPgROK7R9osQzeSUZ0tN6kX5rPyO6hhzR6lEXG2EVT2E1Ylr
-      THINOS_FIRSTBOOT_35
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_36'
       l/Oms0ZcMKW7rBf+77/R3W7vxf3TUB+X7dtLQ5IbccydcS5SLRHBCNdQY6bHp7qPxafBzLBuctz6
       LpUbWHTKXqAQkkp4Xiawg+Y4ezNB3Qe9iNlcdZugeSmCXNvmq+cU6urS69SHxrw3o56hI4/+6bFg
       pWl9KaZpDlVsx5EW6DGxwmkcIfy6H0Pqeh9N82Bs970VwRTJ3WNP78T9R9vhqZWVkbLtzno8DOm5
@@ -18899,6 +18941,9 @@ autoinstall:
       yMaFUka4s8ZWpDYgHcZdBYtpm9sMJB3BqsHFS4NWfUHGgq83EqOEKUeMfVacmr1mxig6Ab84L83t
       kZAQUwC508z8FSIozEuzKCunF/vNCo5MYMbM/P1zTFleGielmWn+R2ZgZhBZPGIKy2jnePksZgUI
       ydm+UAynjLMx6SDcMJf629Y7ZZ4Z21FtBY3L/VggtUjqYqFGwZ1vgwZUjRi3jZAYhKcF0UNhjAhK
+      THINOS_FIRSTBOOT_36
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_37'
       GGhDlSmBB+6toxdwd8x8b2GaOpyuN+0puAeFFxXQN0qEuKdagl23zbbvutHR9MWUrOLSyzTM+EAs
       rB9c+9TQoY+Dc8Bj78ZRgU4sM5ewvt38tWSsB4PtSgRDgRE3QH0VKmg4J2YpNCLrztObmFCfjTAO
       XYgucXlLjS2ZgUCnx5Mv8cLubn/0vl9ncnLHAukjFxF2s5P+bS/PSZ/Jgk5637s/v2X66PmUP+a5
@@ -18931,9 +18976,6 @@ autoinstall:
       dyGO6yYWSlUsFF3RF0vFxjlV1efKj4NtNkRkvLQla3G3gUFe1dykx0gl4l0LLtU0npy1IA1co1P4
       v+Ms/ssyY60VOXwxFpkayYmmJNnsfGbUtAuVbZHPctRjjqt4C6W/1gYc8ga5p0K+9RVHgH1KJo/g
       5BSHkRvjJKfKtJGlOkriJGrkFUK6kCB/MG37Zfmna5TNt01jXfjysuczI2udE282sCQ5ffblVb+Y
-      THINOS_FIRSTBOOT_36
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_37'
       0tm2WcuyzjJfXvzimlTjeNQ1XyLmAtz65bWUHrEV8QEJJmMr8v33FxYG5Fsc2zUaK8Q6ISagcKhz
       jbh1oHPSq4Pe5a8a6MkclfrEmG3oAV69eXv6QrxYtJj/2vzzbefW99/3eitaSVEg9SrbUJ4IwBe3
       QEPi6h5ZlyOMGlYPtlB8hsvVM8K4Y41kKdVSqVKHUZtx30c8OfFTpULC+n2mDC1OV8VtMakWkVgf
@@ -19421,6 +19463,9 @@ autoinstall:
       ZS9MQ19NRVNTQUdFUy9VVAUAA28DuGl1eAsAAQToAwAABOgDAABQSwECHgMUAAAACAB2SnBcgyRG
       oBwnAADAYAAAJgAYAAAAAAAAAAAApIH22AAAbG9jYWxlL2RlL0xDX01FU1NBR0VTL2Rhc2gtdG8t
       cGFuZWwubW9VVAUAA28DuGl1eAsAAQToAwAABOgDAABQSwECHgMKAAAAAAB2SnBcAAAAAAAAAAAA
+      THINOS_FIRSTBOOT_37
+    - |
+      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_38'
       AAAACgAYAAAAAAAAABAA7UFyAAEAbG9jYWxlL3VrL1VUBQADbwO4aXV4CwABBOgDAAAE6AMAAFBL
       AQIeAwoAAAAAAHZKcFwAAAAAAAAAAAAAAAAWABgAAAAAAAAAEADtQbYAAQBsb2NhbGUvdWsvTENf
       TUVTU0FHRVMvVVQFAANvA7hpdXgLAAEE6AMAAAToAwAAUEsBAh4DFAAAAAgAdkpwXGGo7V+oLwAA
@@ -19453,9 +19498,6 @@ autoinstall:
       AQToAwAABOgDAABQSwECHgMKAAAAAAB2SnBcAAAAAAAAAAAAAAAACgAYAAAAAAAAABAA7UG6KgIA
       bG9jYWxlL2VzL1VUBQADbwO4aXV4CwABBOgDAAAE6AMAAFBLAQIeAwoAAAAAAHZKcFwAAAAAAAAA
       AAAAAAAWABgAAAAAAAAAEADtQf4qAgBsb2NhbGUvZXMvTENfTUVTU0FHRVMvVVQFAANvA7hpdXgL
-      THINOS_FIRSTBOOT_37
-    - |
-      cat >> /target/usr/local/sbin/thinos-firstboot <<'THINOS_FIRSTBOOT_38'
       AAEE6AMAAAToAwAAUEsBAh4DFAAAAAgAdkpwXFqoKbg9IQAAhVQAACYAGAAAAAAAAAAAAKSBTisC
       AGxvY2FsZS9lcy9MQ19NRVNTQUdFUy9kYXNoLXRvLXBhbmVsLm1vVVQFAANvA7hpdXgLAAEE6AMA
       AAToAwAAUEsBAh4DCgAAAAAAdkpwXAAAAAAAAAAAAAAAAAoAGAAAAAAAAAAQAO1B60wCAGxvY2Fs
@@ -19602,57 +19644,6 @@ autoinstall:
       glib-compile-schemas /home/vdi/.local/share/gnome-shell/extensions/dash-to-panel@jderose9.github.com/schemas
 
       chown -R vdi:vdi /home/vdi/.local
-
-      # Enabling the extension and setting its own (not the regular
-      # gsettings-visible) schema both need a real dconf write for vdi, done
-      # here directly instead of depending on an XDG autostart entry actually
-      # firing at the right point in the session's startup (that turned out
-      # not to happen reliably). "runuser -u vdi" alone gives gsettings a
-      # normal HOME/user context but no session D-Bus - a bare gsettings set
-      # under it fails outright ("Cannot autolaunch D-Bus without X11
-      # $DISPLAY") since a *write* (unlike a plain get/read) has to go
-      # through dconf's D-Bus service to serialize concurrent writers safely.
-      # "dbus-run-session" spins up a private, throwaway session bus with its
-      # own dconf-service for this to talk to, with no graphical session or
-      # user login required at all - but confirmed live: running eleven of
-      # these back-to-back, each spinning up and tearing down its *own*
-      # independent dconf-service against the same underlying database file,
-      # raced and lost writes (a single isolated call always persisted
-      # correctly; the full batch silently did not, though every call still
-      # reported success). Written instead to one script and run once under
-      # one dbus-run-session/one dconf-service for the whole batch, so there
-      # is only ever one writer touching the database at a time.
-      # --schemadir is required for the arcmenu-specific keys: an extension's
-      # schema, compiled only into its own extension directory, is invisible
-      # to plain gsettings.
-      ARCMENU_SCHEMAS=/home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com/schemas
-      DASHTOPANEL_SCHEMAS=/home/vdi/.local/share/gnome-shell/extensions/dash-to-panel@jderose9.github.com/schemas
-      cat > /tmp/thinos-gsettings-apply.sh <<'THINOS_GSETTINGS_APPLY'
-      #!/bin/bash
-      set -uo pipefail
-      gsettings set org.gnome.shell enabled-extensions "['arcmenu@arcmenu.com', 'dash-to-panel@jderose9.github.com']" || true
-      gsettings set org.gnome.shell favorite-apps "[]" || true
-      # This is an always-autologin appliance; a lock screen only prompts for
-      # a password nobody at the physical console is expected to know, so
-      # waking from suspend must not require one.
-      gsettings set org.gnome.desktop.screensaver lock-enabled false || true
-      gsettings set org.gnome.desktop.lockdown disable-lock-screen true || true
-      if [ -f "$ARCMENU_SCHEMAS/gschemas.compiled" ]; then
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu search-hidden true || true
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-layout-extra-shortcuts "[]" || true
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu show-activities-button false || true
-      fi
-      if [ -f "$DASHTOPANEL_SCHEMAS/gschemas.compiled" ]; then
-          gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel show-activities-button false || true
-          gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel stockgs-keep-top-panel false || true
-          gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel panel-element-positions '{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":true,"position":"stackedBR"}]}' || true
-      fi
-      THINOS_GSETTINGS_APPLY
-      chmod 755 /tmp/thinos-gsettings-apply.sh
-      chown vdi:vdi /tmp/thinos-gsettings-apply.sh
-      ARCMENU_SCHEMAS="$ARCMENU_SCHEMAS" DASHTOPANEL_SCHEMAS="$DASHTOPANEL_SCHEMAS" runuser -u vdi -- dbus-run-session -- /tmp/thinos-gsettings-apply.sh
-      rm -f /tmp/thinos-gsettings-apply.sh
 
       # Self-update: re-fetches ThinOS-v3.yaml, extracts this same script from
       # it (a commit-pinned-then-branch-fallback fetch, same reasoning as
