@@ -19601,36 +19601,49 @@ autoinstall:
       # not to happen reliably). "runuser -u vdi" alone gives gsettings a
       # normal HOME/user context but no session D-Bus - a bare gsettings set
       # under it fails outright ("Cannot autolaunch D-Bus without X11
-      # $DISPLAY", confirmed live: every write silently no-opped despite
-      # printing that warning, even though the script still exited 0) since
-      # a *write* (unlike a plain get/read) has to go through dconf's D-Bus
-      # service to serialize concurrent writers safely. "dbus-run-session"
-      # spins up a private, throwaway session bus for just this call, which
-      # is enough for dconf to complete the write with no graphical session
-      # or user login present at all.
+      # $DISPLAY") since a *write* (unlike a plain get/read) has to go
+      # through dconf's D-Bus service to serialize concurrent writers safely.
+      # "dbus-run-session" spins up a private, throwaway session bus with its
+      # own dconf-service for this to talk to, with no graphical session or
+      # user login required at all - but confirmed live: running eleven of
+      # these back-to-back, each spinning up and tearing down its *own*
+      # independent dconf-service against the same underlying database file,
+      # raced and lost writes (a single isolated call always persisted
+      # correctly; the full batch silently did not, though every call still
+      # reported success). Written instead to one script and run once under
+      # one dbus-run-session/one dconf-service for the whole batch, so there
+      # is only ever one writer touching the database at a time.
       # --schemadir is required for the arcmenu-specific keys: an extension's
       # schema, compiled only into its own extension directory, is invisible
       # to plain gsettings.
       ARCMENU_SCHEMAS=/home/vdi/.local/share/gnome-shell/extensions/arcmenu@arcmenu.com/schemas
       DASHTOPANEL_SCHEMAS=/home/vdi/.local/share/gnome-shell/extensions/dash-to-panel@jderose9.github.com/schemas
-      runuser -u vdi -- dbus-run-session -- gsettings set org.gnome.shell enabled-extensions "['arcmenu@arcmenu.com', 'dash-to-panel@jderose9.github.com']" || true
-      runuser -u vdi -- dbus-run-session -- gsettings set org.gnome.shell favorite-apps "[]" || true
+      cat > /tmp/thinos-gsettings-apply.sh <<'THINOS_GSETTINGS_APPLY'
+      #!/bin/bash
+      set -uo pipefail
+      gsettings set org.gnome.shell enabled-extensions "['arcmenu@arcmenu.com', 'dash-to-panel@jderose9.github.com']" || true
+      gsettings set org.gnome.shell favorite-apps "[]" || true
       # This is an always-autologin appliance; a lock screen only prompts for
       # a password nobody at the physical console is expected to know, so
       # waking from suspend must not require one.
-      runuser -u vdi -- dbus-run-session -- gsettings set org.gnome.desktop.screensaver lock-enabled false || true
-      runuser -u vdi -- dbus-run-session -- gsettings set org.gnome.desktop.lockdown disable-lock-screen true || true
+      gsettings set org.gnome.desktop.screensaver lock-enabled false || true
+      gsettings set org.gnome.desktop.lockdown disable-lock-screen true || true
       if [ -f "$ARCMENU_SCHEMAS/gschemas.compiled" ]; then
-          runuser -u vdi -- dbus-run-session -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
-          runuser -u vdi -- dbus-run-session -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu search-hidden true || true
-          runuser -u vdi -- dbus-run-session -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-layout-extra-shortcuts "[]" || true
-          runuser -u vdi -- dbus-run-session -- gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu show-activities-button false || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu search-hidden true || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-layout-extra-shortcuts "[]" || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu show-activities-button false || true
       fi
       if [ -f "$DASHTOPANEL_SCHEMAS/gschemas.compiled" ]; then
-          runuser -u vdi -- dbus-run-session -- gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel show-activities-button false || true
-          runuser -u vdi -- dbus-run-session -- gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel stockgs-keep-top-panel false || true
-          runuser -u vdi -- dbus-run-session -- gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel panel-element-positions '{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":true,"position":"stackedBR"}]}' || true
+          gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel show-activities-button false || true
+          gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel stockgs-keep-top-panel false || true
+          gsettings --schemadir "$DASHTOPANEL_SCHEMAS" set org.gnome.shell.extensions.dash-to-panel panel-element-positions '{"0":[{"element":"showAppsButton","visible":false,"position":"stackedTL"},{"element":"activitiesButton","visible":false,"position":"stackedTL"},{"element":"leftBox","visible":true,"position":"stackedTL"},{"element":"taskbar","visible":true,"position":"stackedTL"},{"element":"centerBox","visible":true,"position":"stackedBR"},{"element":"rightBox","visible":true,"position":"stackedBR"},{"element":"dateMenu","visible":true,"position":"stackedBR"},{"element":"systemMenu","visible":true,"position":"stackedBR"},{"element":"desktopButton","visible":true,"position":"stackedBR"}]}' || true
       fi
+      THINOS_GSETTINGS_APPLY
+      chmod 755 /tmp/thinos-gsettings-apply.sh
+      chown vdi:vdi /tmp/thinos-gsettings-apply.sh
+      ARCMENU_SCHEMAS="$ARCMENU_SCHEMAS" DASHTOPANEL_SCHEMAS="$DASHTOPANEL_SCHEMAS" runuser -u vdi -- dbus-run-session -- /tmp/thinos-gsettings-apply.sh
+      rm -f /tmp/thinos-gsettings-apply.sh
 
       # Self-update: re-fetches ThinOS-v3.yaml, extracts this same script from
       # it (a commit-pinned-then-branch-fallback fetch, same reasoning as
