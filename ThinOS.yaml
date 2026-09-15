@@ -172,11 +172,32 @@ autoinstall:
           /home/kiosk/Desktop \
           /home/kiosk/.config/nemo \
           /home/kiosk/.config/thinclient \
+          /home/kiosk/.config/gtk-4.0 \
           /home/kiosk/.cache/thinclient \
           /home/kiosk/.local/share/nemo/actions \
           /home/kiosk/.local/share/nemo-python/extensions
 
       runuser -u kiosk -- xdg-user-dirs-update --set DESKTOP /home/kiosk/Desktop 2>/dev/null || true
+
+      # Openbox runs with no compositor (deliberately - see thinclient-session),
+      # so GTK4/libadwaita's client-side decoration shadow, an alpha-blended
+      # region around every window, doesn't get proper double buffering.
+      # Reported as visible flicker specifically when two or more of these
+      # apps (Control Panel, System Information, Administrator Login) are
+      # open together and the active window changes. Dropping the shadow
+      # removes the alpha blending that needs a compositor to redraw cleanly;
+      # GTK4 auto-loads this file for every app for this user, so it covers
+      # all of them without touching each app's own code.
+      cat > /home/kiosk/.config/gtk-4.0/gtk.css <<'EOF'
+      decoration {
+          box-shadow: none;
+          margin: 0;
+      }
+
+      window.background {
+          box-shadow: none;
+      }
+      EOF
 
       # Enterprise-style wallpaper shipped with the appliance. It is a simple
       # original SVG so the installation has no external wallpaper dependency.
