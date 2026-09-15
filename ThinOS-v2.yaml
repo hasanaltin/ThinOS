@@ -21862,12 +21862,17 @@ autoinstall:
       # Dash to Panel's own "Show Applications" button opens GNOME Shell's
       # full-screen app grid (reported as a "metro menu" - not what a
       # taskbar Start Menu should do), so ArcMenu takes over that role
-      # instead: same pinned apps as the taskbar, "windows" layout for a
-      # compact popup anchored to its own taskbar button rather than a
-      # full-screen overview.
+      # instead: same pinned apps as the taskbar. "gnome-menu" layout for a
+      # plain vertical list (no search bar, no categories, no sidebar) to
+      # match the old Openbox Start Menu's look, rather than a tiled/grid
+      # layout or GNOME Shell's own full-screen overview. search-hidden and
+      # default-menu-view are generic (not layout-specific) settings;
+      # default-menu-view's own default is already Pinned_Apps, set
+      # explicitly anyway rather than relying on that not changing upstream.
       if [ -f "$ARCMENU_SCHEMAS/gschemas.compiled" ]; then
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'windows' || true
-          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu windows-show-frequent-apps false || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu menu-layout 'gnome-menu' || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu search-hidden true || true
+          gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu default-menu-view 'Pinned_Apps' || true
           gsettings --schemadir "$ARCMENU_SCHEMAS" set org.gnome.shell.extensions.arcmenu pinned-apps "[{'id': 'thinclient-citrix.desktop'}, {'id': 'thinclient-rdp.desktop'}, {'id': 'thinclient-horizon.desktop'}, {'id': 'nemo.desktop'}, {'id': 'thinclient-system-info.desktop'}, {'id': 'thinclient-control-panel.desktop'}, {'id': 'thinclient-admin-mode.desktop'}]" || true
       fi
 
