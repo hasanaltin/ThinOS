@@ -10667,6 +10667,25 @@ autoinstall:
       if gsettings list-schemas | grep -qx 'org.gnome.shell'; then
           gsettings set org.gnome.shell enabled-extensions "['dash-to-panel@jderose9.github.com']" || true
           gsettings set org.gnome.shell disable-user-extensions false || true
+
+          # Only the appliance's own apps on the taskbar, matching the old
+          # Openbox Start Menu's entries - not every installed GNOME app
+          # (Firefox, Terminal, Text Editor, ...).
+          gsettings set org.gnome.shell favorite-apps "['thinclient-citrix.desktop', 'thinclient-rdp.desktop', 'thinclient-horizon.desktop', 'nemo.desktop', 'thinclient-system-info.desktop', 'thinclient-control-panel.desktop', 'thinclient-admin-mode.desktop']" || true
+      fi
+
+      # Activities is reachable three ways in stock GNOME Shell - the panel
+      # button, the top-left hot corner, and the Super key - so all three
+      # are turned off here, not just the button, to actually keep users on
+      # the pinned taskbar icons rather than the full app grid/overview.
+      if gsettings list-schemas | grep -qx 'org.gnome.shell.extensions.dash-to-panel'; then
+          gsettings set org.gnome.shell.extensions.dash-to-panel show-activities-button false || true
+      fi
+      if gsettings list-schemas | grep -qx 'org.gnome.desktop.interface'; then
+          gsettings set org.gnome.desktop.interface enable-hot-corners false || true
+      fi
+      if gsettings list-schemas | grep -qx 'org.gnome.mutter'; then
+          gsettings set org.gnome.mutter overlay-key '' || true
       fi
 
       # Thin-client users get exactly one workspace, same as the Openbox
@@ -11099,6 +11118,69 @@ autoinstall:
       Gtk.main()
       PY
       chmod 755 /usr/local/bin/thinclient-rdp
+
+      # .desktop launchers for the GNOME Shell / Dash to Panel taskbar (the
+      # Start Menu these used to live in is gone with Openbox). Names/icons
+      # match the old Start Menu entries for continuity.
+      cat > /usr/share/applications/thinclient-citrix.desktop <<'EOF'
+      [Desktop Entry]
+      Type=Application
+      Name=Citrix Workspace
+      Icon=citrix-receiver
+      Exec=/usr/local/bin/thinclient-citrix
+      Terminal=false
+      Categories=Network;
+      EOF
+
+      cat > /usr/share/applications/thinclient-rdp.desktop <<'EOF'
+      [Desktop Entry]
+      Type=Application
+      Name=Remote Desktop
+      Icon=computer-symbolic
+      Exec=/usr/local/bin/thinclient-rdp
+      Terminal=false
+      Categories=Network;
+      EOF
+
+      cat > /usr/share/applications/thinclient-horizon.desktop <<'EOF'
+      [Desktop Entry]
+      Type=Application
+      Name=Omnissa Horizon
+      Icon=video-display-symbolic
+      Exec=/usr/local/bin/thinclient-horizon
+      Terminal=false
+      Categories=Network;
+      EOF
+
+      cat > /usr/share/applications/thinclient-system-info.desktop <<'EOF'
+      [Desktop Entry]
+      Type=Application
+      Name=System Information
+      Icon=dialog-information-symbolic
+      Exec=/usr/local/bin/thinclient-system-info
+      Terminal=false
+      Categories=System;
+      EOF
+
+      cat > /usr/share/applications/thinclient-control-panel.desktop <<'EOF'
+      [Desktop Entry]
+      Type=Application
+      Name=Control Panel
+      Icon=preferences-system-symbolic
+      Exec=/usr/local/bin/thinclient-control-panel
+      Terminal=false
+      Categories=Settings;
+      EOF
+
+      cat > /usr/share/applications/thinclient-admin-mode.desktop <<'EOF'
+      [Desktop Entry]
+      Type=Application
+      Name=Administrator Login
+      Icon=changes-prevent-symbolic
+      Exec=/usr/local/bin/thinclient-admin-mode
+      Terminal=false
+      Categories=System;
+      EOF
 
       # Password prompt and connection launcher for saved RDP profiles.
       cat > /usr/local/bin/thinclient-rdp-profile <<'PY'
