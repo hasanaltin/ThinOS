@@ -26389,7 +26389,7 @@ autoinstall:
       chmod 755 /usr/local/sbin/install-horizon-client
 
       # Permissions after all files are in place.
-      chown -R kiosk:kiosk /home/kiosk
+      chown -R kiosk:kiosk /home/kiosk 2>/dev/null || true
       chmod 700 /home/kiosk/.config/thinclient /home/kiosk/.cache/thinclient || true
 
 
@@ -26462,7 +26462,7 @@ autoinstall:
       fi
 
       # Permissions after final validation.
-      chown -R kiosk:kiosk /home/kiosk
+      chown -R kiosk:kiosk /home/kiosk 2>/dev/null || true
       chmod 700 /home/kiosk/.config/thinclient /home/kiosk/.cache/thinclient || true
 
       # Atomically make LightDM the production display manager only now.
